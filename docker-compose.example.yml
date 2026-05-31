@@ -1,0 +1,11 @@
+services:
+  vw-euda-mqtt:
+    build: .
+    container_name: vw-euda-mqtt
+    restart: unless-stopped
+    environment:
+      - TZ=Europe/Berlin
+    volumes:
+      - ./config.json:/config/config.json:ro
+      - ./data:/config/data
+    command: ["--config", "/config/config.json"]

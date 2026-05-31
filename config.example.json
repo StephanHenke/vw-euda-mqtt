@@ -1,0 +1,26 @@
+{
+  "email": "you@example.com",
+  "password": "secret",
+  "brand": "AUDI",
+  "country": "de",
+  "language": "de",
+  "vin": "",
+  "identifier": "",
+  "poll_interval_seconds": 900,
+  "retry_interval_seconds": 60,
+  "publish_unchanged": false,
+  "state_file": "data/state.json",
+  "mqtt": {
+    "host": "192.168.10.244",
+    "port": 1883,
+    "username": "",
+    "password": "",
+    "client_id": "vw-euda-mqtt",
+    "base_topic": "vw/euda",
+    "retain": true,
+    "qos": 0,
+    "publish_raw": false,
+    "publish_carcompat": false,
+    "carcompat_base_topic": "car"
+  }
+}

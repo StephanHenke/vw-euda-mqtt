@@ -1,0 +1,16 @@
+[project]
+name = "vw-euda-mqtt"
+version = "0.1.0"
+description = "Small VW EU Data Act to MQTT bridge"
+requires-python = ">=3.11"
+dependencies = [
+  "aiohttp>=3.9",
+  "paho-mqtt>=2.0",
+]
+
+[project.scripts]
+vw-euda-mqtt = "vw_euda_mqtt.service:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
