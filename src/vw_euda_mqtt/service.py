@@ -337,6 +337,7 @@ def publish_status(
         "connected": connected,
         "error": error,
         "error_type": error_type,
+        "last_error_at": "",
         "last_status_at": now,
     }
     if connected:
