@@ -192,6 +192,15 @@ def _next_sleep(listing: list[dict], poll_interval_seconds: int, retry_interval_
     return retry_interval_seconds
 
 
+def _is_dataset_listing_pending(err: ApiError) -> bool:
+    text = str(err)
+    return (
+        "/datadelivery/" in text
+        and "/list" in text
+        and any(f"HTTP {status}" in text for status in (404, 500, 502, 503, 504))
+    )
+
+
 async def _select_vehicle_and_identifier(client: EudaApiClient, config: ServiceConfig) -> tuple[str, str]:
     vin = config.vin
     if not vin:
@@ -222,13 +231,38 @@ async def poll_once(config: ServiceConfig, config_path: Path, dry_run: bool = Fa
     async with aiohttp.ClientSession(cookie_jar=aiohttp.CookieJar()) as session:
         client = EudaApiClient(session, config.portal)
         vin, identifier = await _select_vehicle_and_identifier(client, config)
-        listing = await client.async_list_datasets(vin, identifier)
+        try:
+            listing = await client.async_list_datasets(vin, identifier)
+        except ApiError as err:
+            if not _is_dataset_listing_pending(err):
+                raise
+            message = f"Dataset listing not available yet for identifier {identifier}: {err}"
+            LOG.warning(message)
+            publish_status(
+                config,
+                vin,
+                connected=True,
+                error=message,
+                error_type="PendingData",
+                dry_run=dry_run,
+            )
+            return config.retry_interval_seconds
         content = sorted(
             (entry for entry in listing if entry.get("name") and not entry["name"].endswith(NO_CONTENT_SUFFIX)),
             key=lambda entry: _created_on(entry) or datetime.min.replace(tzinfo=timezone.utc),
         )
         if not content:
-            raise ApiError("No content datasets available yet")
+            message = "No content datasets available yet"
+            LOG.info(message)
+            publish_status(
+                config,
+                vin,
+                connected=True,
+                error=message,
+                error_type="PendingData",
+                dry_run=dry_run,
+            )
+            return _next_sleep(listing, config.poll_interval_seconds, config.retry_interval_seconds)
 
         newest = content[-1]
         name = newest["name"]
