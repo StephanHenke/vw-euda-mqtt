@@ -1,74 +1,169 @@
 # VW EU Data Act MQTT Service
 
-Small standalone bridge for the Volkswagen EU Data Act portal.
+Kleiner eigenständiger Dienst, der Daten aus dem Volkswagen Group EU Data Act
+Portal abholt und als MQTT-Topics veröffentlicht.
 
-It logs in to `eu-data-act.drivesomethinggreater.com`, downloads the newest
-continuous-data ZIP for a VIN, extracts useful datapoints, and publishes them to
-MQTT as retained topics.
+Der Dienst meldet sich bei `eu-data-act.drivesomethinggreater.com` an, wählt die
+konfigurierte Marke aus, liest die neueste Continuous-Data-ZIP-Datei für eine
+FIN/VIN, extrahiert nützliche Fahrzeugwerte und publiziert sie retained nach
+MQTT.
 
-This is based on the login and dataset approach from
+Der Login- und Dataset-Ansatz basiert auf
 <https://github.com/mikrohard/hass-vw-eu-data-act> (MIT).
 
-## Prerequisites
+## Was der Dienst tut
 
-1. Log in once at <https://eu-data-act.drivesomethinggreater.com/>.
-2. Select the correct brand, for example `Audi`.
-3. Use the same myAudi/VW account as in `config.json`.
-4. Accept any account/portal terms, registration prompts, consent screens, or
-   country/language prompts shown by Volkswagen.
-5. Connect the vehicle.
-6. Enable a continuous/customised data request with 15 minute frequency.
-7. Wait until the portal shows ZIP datasets for the vehicle.
+- Login beim EU Data Act Portal mit dem Konto aus `config.json`.
+- Markenauswahl über den Portal-Redirect, zum Beispiel `brand=AUDI&method=login`.
+- Automatische Behandlung der notwendigen VW/Audi Identity Onboarding-Schritte.
+- Abruf der Continuous-Data-Metadaten und ZIP-Datasets.
+- Überspringen von `*_no_content_found.zip`, weil diese Dateien keine
+  Fahrzeugdaten enthalten.
+- MQTT-Publish der wichtigsten Werte und optional der Rohdaten.
 
-The service only downloads datasets that the portal already creates. It does not
-create the data request.
+Der Dienst erstellt keine Datenanfrage im Portal. Er kann nur ZIP-Dateien
+abrufen, die das Portal bereits erzeugt.
 
-## VW Identity Onboarding
+## Voraussetzungen im Portal
 
-The EU Data Act portal uses the VW Identity client `GIS Consent Portal`.
-Depending on the account state, the first non-browser login can trigger extra
-VW Identity screens. This also applies when `brand` is set to `AUDI`; the
-Identity pages can still say Volkswagen ID because Audi uses the VW Group
-Identity backend.
+1. Einmal im Browser auf <https://eu-data-act.drivesomethinggreater.com/>
+   anmelden.
+2. Die passende Marke auswählen, bei diesem Projekt typischerweise `Audi`.
+3. Dasselbe myAudi/VW-Konto verwenden, das auch in `config.json` steht.
+4. Offene AGB-, Registrierungs-, Land-/Sprache- und Consent-Dialoge abschließen.
+5. Prüfen, dass das Fahrzeug verbunden ist und die FIN/VIN stimmt.
+6. Eine `continuous/customised data request` mit 15-Minuten-Frequenz aktivieren.
+7. Warten, bis das Portal ZIP-Datensätze für das Fahrzeug anzeigt.
 
-For login, the service first calls the portal's brand redirect endpoint with
-the configured brand, for example `brand=AUDI&method=login`, and then follows
-the returned OIDC authorize URL. This avoids using the wrong VW Identity client
-for Audi vehicles.
+Aktueller erwartbarer Zwischenzustand direkt nach dem Einrichten:
 
-- `terms-and-conditions`: the service automatically confirms the required
-  IdentityKit terms and data privacy documents for the GIS client.
-- `consent/users`: the service automatically grants the required OAuth scopes
-  for basic profile and vehicle access.
-- `consent/marketing`: the service skips optional marketing/personalised
-  communication consent.
-- `verification/email-sent`: Volkswagen sent a confirmation email. Open the
-  verification link in that email, then run or restart the service again.
+```text
+No content datasets available yet
+```
 
-## Run Locally
+Das bedeutet, dass der Login funktioniert, aber Volkswagen bisher nur
+`*_no_content_found.zip` erzeugt hat. Der Dienst pollt weiter und verarbeitet
+die erste ZIP-Datei mit echtem Inhalt automatisch.
+
+## VW/Audi Identity Onboarding
+
+Auch bei `brand: "AUDI"` können die Login-Seiten `Volkswagen ID` anzeigen.
+Audi nutzt hier die VW Group Identity Infrastruktur.
+
+Der Dienst ruft zuerst den offiziellen Brand-Redirect des Portals auf, zum
+Beispiel:
+
+```text
+/services/redirect/authentication?brand=AUDI&method=login
+```
+
+Aus diesem Redirect liest er die korrekte OIDC-Authorize-URL. Das ist wichtig,
+weil Audi einen anderen Identity-Client verwenden kann als der generische
+GIS-Consent-Client.
+
+Je nach Kontostand können beim ersten nicht-browserbasierten Login diese
+Stationen auftreten:
+
+- `terms-and-conditions`: notwendige IdentityKit-Nutzungsbedingungen und
+  Datenschutzdokumente werden automatisch bestätigt.
+- `consent/users`: notwendige OAuth-Berechtigungen für Basisprofil und
+  Fahrzeugzugriff werden automatisch erlaubt.
+- `consent/marketing`: optionale Marketing-/Kommunikations-Einwilligung wird
+  automatisch übersprungen.
+- `verification/email-sent`: Volkswagen hat eine Bestätigungsmail gesendet. Den
+  Link in der Mail öffnen und danach den Dienst neu starten.
+
+## Konfiguration
+
+Ausgangspunkt ist `config.example.json`:
+
+```powershell
+Copy-Item config.example.json config.json
+```
+
+Wichtige Felder:
+
+- `email` / `password`: myAudi/VW-Konto.
+- `brand`: für Audi auf `AUDI` setzen.
+- `country` / `language`: für Deutschland typischerweise `de`.
+- `vin`: FIN/VIN des Fahrzeugs. Wenn leer, versucht der Dienst ein einzelnes
+  Fahrzeug automatisch zu finden.
+- `identifier`: kann leer bleiben. Der Dienst liest den Continuous-Data-
+  Identifier aus den Metadaten.
+- `poll_interval_seconds`: Standard `900`, passend zu 15 Minuten.
+- `mqtt.host`, `mqtt.port`, `mqtt.username`, `mqtt.password`: MQTT-Zugang.
+- `mqtt.base_topic`: Standard `vw/euda`.
+- `mqtt.publish_raw`: veröffentlicht zusätzlich alle Rohdaten unter `raw/...`.
+- `mqtt.publish_carcompat`: spiegelt einzelne Werte optional unter
+  `car/garage/<vin>/...`.
+
+`config.json` enthält Zugangsdaten und ist deshalb per `.gitignore` vom Git-Repo
+ausgeschlossen.
+
+## Lokal testen
 
 ```powershell
 cd C:\Users\steph\Documents\Entwicklungen\vw-euda-mqtt
-Copy-Item config.example.json config.json
-# edit config.json
+uv run vw-euda-mqtt --config config.json --once --dry-run --debug
+```
+
+Ohne MQTT-Publish, aber mit echtem Portal-Login:
+
+```powershell
 uv run vw-euda-mqtt --config config.json --once --dry-run
+```
+
+Einmaliger echter Lauf mit MQTT-Publish:
+
+```powershell
 uv run vw-euda-mqtt --config config.json --once
+```
+
+Dauerbetrieb lokal:
+
+```powershell
 uv run vw-euda-mqtt --config config.json
 ```
 
-## Run With Docker
+## Docker-Betrieb
+
+Im Projektordner:
 
 ```bash
 cp config.example.json config.json
 mkdir -p data
-docker compose -f docker-compose.example.yml up -d --build
+docker compose up -d --build
 ```
 
-## MQTT Topics
+Logs anzeigen:
 
-Default base topic is `vw/euda/<vin>/`.
+```bash
+docker logs -f vw-euda-mqtt
+```
 
-Selected topics:
+Container neu bauen und starten:
+
+```bash
+docker compose up -d --build
+```
+
+Auf der OpenHAB-VM wird Docker aktuell mit `sudo` ausgeführt:
+
+```bash
+cd /home/administrator/vw_euda_mqtt_service
+sudo docker compose up -d --build
+sudo docker logs -f vw-euda-mqtt
+```
+
+## MQTT-Topics
+
+Standard-Basis:
+
+```text
+vw/euda/<vin>/
+```
+
+Auswahl der veröffentlichten Topics:
 
 - `status/online`
 - `status/connected`
@@ -91,23 +186,57 @@ Selected topics:
 - `parking_brake`
 - `json`
 
-If the portal login or API poll fails, the service publishes retained error
-state to `vw/euda/<vin>/status/...` when a VIN is configured. Without a VIN it
-uses `vw/euda/_service/status/...`.
+Bei Login- oder Polling-Fehlern schreibt der Dienst retained Fehlerstatus nach:
 
-Set `mqtt.publish_raw` to `true` to publish all datapoints under
-`raw/<sanitized-field-name>`.
+```text
+vw/euda/<vin>/status/...
+```
 
-Set `mqtt.publish_carcompat` to `true` only if you intentionally want to mirror
-selected values to CarConnectivity-like topics under `car/garage/<vin>/...`.
-Leave it off while the normal CarConnectivity container also publishes `car/#`.
+Wenn keine VIN konfiguriert ist, nutzt er:
 
-## Current Notes
+```text
+vw/euda/_service/status/...
+```
 
-- `config.json` is intentionally ignored by Git because it contains account and
-  MQTT credentials.
-- `data/` is ignored and used only for runtime state.
-- Datasets named `*_no_content_found.zip` are skipped; they mean the portal
-  created an interval file without vehicle payload.
-- Docker deployment currently needs sudo or Docker group access on the OpenHAB
-  VM.
+## Fehlersuche
+
+`Authentication failed: terms-and-conditions`
+
+Der alte Fehler bedeutete, dass VW Identity noch AGB/Registrierung verlangte.
+Der Dienst kann diesen Schritt inzwischen automatisch bestätigen. Falls der
+Fehler erneut auftaucht, mit `--debug` testen und die Ziel-URL prüfen.
+
+`verification/email-sent`
+
+Volkswagen hat eine Bestätigungsmail geschickt. Den Link in der Mail anklicken
+und danach den Dienst neu starten.
+
+`No continuous-data Identifier returned`
+
+Im EU Data Act Portal ist für die VIN noch keine Continuous-/Customised-
+Datenanfrage aktiv.
+
+`No content datasets available yet`
+
+Login, Marke und Identifier funktionieren. Das Portal erzeugt aber aktuell nur
+`*_no_content_found.zip`. Warten, bis eine ZIP-Datei mit echtem Inhalt vorhanden
+ist.
+
+`HTTP 401`
+
+Meist wurde der falsche Brand-/Identity-Client verwendet oder der Portal-Login
+ist abgelaufen. Mit `--debug` prüfen, ob der Login bei
+`/de/de/user.html` landet.
+
+`HTTP 500` beim List-Endpunkt
+
+Kann beim Portal transient auftreten. Der Dienst wiederholt den Poll nach
+`retry_interval_seconds`.
+
+## Git- und Sicherheitsnotizen
+
+- `config.json` ist ignoriert, weil es Konto- und MQTT-Zugangsdaten enthält.
+- `access.txt` ist ignoriert, weil dort VM-Zugangsdaten liegen können.
+- `data/` ist ignoriert und enthält nur Laufzeitstatus.
+- Niemals echte Passwörter, VINs mit Personenbezug oder Tokens committen, wenn
+  das Repo öffentlich werden soll.
