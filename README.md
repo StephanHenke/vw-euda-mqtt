@@ -23,6 +23,28 @@ This is based on the login and dataset approach from
 The service only downloads datasets that the portal already creates. It does not
 create the data request.
 
+## VW Identity Onboarding
+
+The EU Data Act portal uses the VW Identity client `GIS Consent Portal`.
+Depending on the account state, the first non-browser login can trigger extra
+VW Identity screens. This also applies when `brand` is set to `AUDI`; the
+Identity pages can still say Volkswagen ID because Audi uses the VW Group
+Identity backend.
+
+For login, the service first calls the portal's brand redirect endpoint with
+the configured brand, for example `brand=AUDI&method=login`, and then follows
+the returned OIDC authorize URL. This avoids using the wrong VW Identity client
+for Audi vehicles.
+
+- `terms-and-conditions`: the service automatically confirms the required
+  IdentityKit terms and data privacy documents for the GIS client.
+- `consent/users`: the service automatically grants the required OAuth scopes
+  for basic profile and vehicle access.
+- `consent/marketing`: the service skips optional marketing/personalised
+  communication consent.
+- `verification/email-sent`: Volkswagen sent a confirmation email. Open the
+  verification link in that email, then run or restart the service again.
+
 ## Run Locally
 
 ```powershell

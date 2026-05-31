@@ -13,7 +13,7 @@ import uuid
 import zipfile
 from dataclasses import dataclass
 from html.parser import HTMLParser
-from urllib.parse import urlencode, urljoin, urlparse
+from urllib.parse import parse_qs, urlencode, urljoin, urlparse
 
 import aiohttp
 
@@ -65,6 +65,7 @@ class _FormParser(HTMLParser):
         super().__init__()
         self.action: str | None = None
         self.fields: dict[str, str] = {}
+        self.field_items: list[tuple[str, str]] = []
         self._in_form = False
         self._done = False
 
@@ -78,7 +79,9 @@ class _FormParser(HTMLParser):
         elif tag == "input" and self._in_form:
             name = attr.get("name")
             if name:
-                self.fields[name] = attr.get("value") or ""
+                value = attr.get("value") or ""
+                self.fields[name] = value
+                self.field_items.append((name, value))
 
     def handle_endtag(self, tag: str) -> None:
         if tag == "form" and self._in_form:
@@ -119,6 +122,13 @@ def _extract_csrf(html: str) -> str | None:
     return match.group(1) if match else None
 
 
+def _safe_url_for_log(url: str) -> str:
+    parsed = urlparse(url)
+    if parsed.scheme and parsed.netloc:
+        return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+    return parsed.path or url
+
+
 def _login_fields(html: str) -> tuple[dict[str, str], str | None]:
     form = _parse_form(html)
     fields: dict[str, str] = dict(form.fields)
@@ -142,6 +152,81 @@ def _login_error(html: str) -> str | None:
     if isinstance(err, dict):
         return err.get("text") or err.get("errorCode") or str(err)
     return str(err) if err else None
+
+
+def _terms_payload(html: str) -> dict[str, str]:
+    model = _extract_template_model(html)
+    data: dict[str, str] = {}
+    for idx, doc in enumerate(model.get("legalDocuments") or []):
+        prefix = f"legalDocuments[{idx}]"
+        for key in ("name", "language", "version", "countryCode"):
+            data[f"{prefix}.{key}"] = str(doc.get(key) or "")
+        data[f"{prefix}.updated"] = "yes" if doc.get("updated") else "no"
+        data[f"{prefix}.skippable"] = "yes" if doc.get("skippable") else "no"
+        data[f"{prefix}.declinable"] = "yes" if doc.get("declinable") else "no"
+    if model.get("relayState"):
+        data["relayState"] = str(model["relayState"])
+    if model.get("hmac"):
+        data["hmac"] = str(model["hmac"])
+    if csrf := _extract_csrf(html):
+        data["_csrf"] = csrf
+    return data
+
+
+def _terms_action_url(landing: str, html: str) -> str:
+    model = _extract_template_model(html)
+    client_id = (
+        (model.get("clientLegalEntityModel") or {}).get("clientId")
+        or OIDC_CLIENT_ID
+    )
+    parsed = urlparse(landing)
+    origin = f"{parsed.scheme}://{parsed.netloc}"
+    return f"{origin}/signin-service/v1/{client_id}/terms-and-conditions"
+
+
+def _form_payload(html: str) -> list[tuple[str, str]]:
+    return _parse_form(html).field_items
+
+
+def _marketing_payload(html: str) -> list[tuple[str, str]]:
+    model = _extract_template_model(html)
+    data: list[tuple[str, str]] = []
+    csrf = model.get("csrf") or {}
+    if isinstance(csrf, dict) and csrf.get("parameterName") and csrf.get("token"):
+        data.append((str(csrf["parameterName"]), str(csrf["token"])))
+    elif token := _extract_csrf(html):
+        data.append(("_csrf", token))
+    for model_key, field_name in (
+        ("documentKey", "documentKey"),
+        ("relayStateToken", "relayState"),
+        ("hmac", "hmac"),
+        ("countryOfJurisdiction", "countryOfJurisdiction"),
+        ("language", "language"),
+        ("callback", "callback"),
+    ):
+        if model.get(model_key) is not None:
+            data.append((field_name, str(model[model_key])))
+    selected_channels = {
+        item.get("channelId")
+        for item in model.get("marketChannels") or []
+        if item.get("channelType") == "BOUND_TO_BASIC_AGREEMENT"
+    }
+    for item in model.get("marketChannels") or []:
+        channel_id = item.get("channelId")
+        if channel_id:
+            value = "true" if channel_id in selected_channels else "false"
+            data.append((f"channel{channel_id}", value))
+    return data
+
+
+def _marketing_skip_url(landing: str, html: str) -> str:
+    model = _extract_template_model(html)
+    parsed = urlparse(landing)
+    origin = f"{parsed.scheme}://{parsed.netloc}"
+    return (
+        f"{origin}/signin-service/v1/consent/marketing/"
+        f"{model['userId']}/{model['clientId']}/{model['step']}/skip"
+    )
 
 
 def _extract_vins(payload) -> list[dict]:
@@ -201,7 +286,7 @@ class EudaApiClient:
         except aiohttp.ClientError as err:
             LOG.debug("Portal priming failed, continuing: %s", err)
 
-        authorize_url = self._build_authorize_url()
+        authorize_url = await self._get_authorize_url()
         LOG.debug("OIDC authorize URL: %s", authorize_url)
         async with await self._get(authorize_url) as resp:
             signin_url = str(resp.url)
@@ -242,6 +327,8 @@ class EudaApiClient:
             headers={"User-Agent": USER_AGENT, "Referer": authenticate_url},
         ) as resp:
             landing = str(resp.url)
+            safe_landing = _safe_url_for_log(landing)
+            LOG.debug("Identity login landed at %s", safe_landing)
             landing_html = await resp.text()
             if resp.status >= 400:
                 err = _login_error(landing_html)
@@ -249,15 +336,92 @@ class EudaApiClient:
 
         portal_host = urlparse(BASE_URL).netloc
         if "terms-and-conditions" in landing:
+            LOG.info("Accepting required VW identity terms at %s", safe_landing)
+            terms_action = _terms_action_url(landing, landing_html)
+            terms_origin = urlparse(terms_action)
+            async with self._session.post(
+                terms_action,
+                data=_terms_payload(landing_html),
+                headers={
+                    "User-Agent": USER_AGENT,
+                    "Referer": landing,
+                    "Origin": f"{terms_origin.scheme}://{terms_origin.netloc}",
+                },
+            ) as resp:
+                landing = str(resp.url)
+                safe_landing = _safe_url_for_log(landing)
+                LOG.debug("Terms confirmation landed at %s", safe_landing)
+                landing_html = await resp.text()
+                if resp.status >= 400:
+                    err = _login_error(landing_html)
+                    raise AuthError(
+                        err
+                        or "Could not confirm VW identity terms automatically. "
+                        f"Login landed at {safe_landing}"
+                    )
+        if "/consent/users/" in landing:
+            LOG.info("Granting required VW identity client consent at %s", safe_landing)
+            consent_payload = _form_payload(landing_html)
+            if not consent_payload:
+                raise AuthError(
+                    "VW identity client requires consent, but the consent form could not be parsed. "
+                    f"Login landed at {safe_landing}"
+                )
+            consent_origin = urlparse(landing)
+            async with self._session.post(
+                landing,
+                data=consent_payload,
+                headers={
+                    "User-Agent": USER_AGENT,
+                    "Referer": landing,
+                    "Origin": f"{consent_origin.scheme}://{consent_origin.netloc}",
+                },
+            ) as resp:
+                landing = str(resp.url)
+                safe_landing = _safe_url_for_log(landing)
+                LOG.debug("Consent confirmation landed at %s", safe_landing)
+                landing_html = await resp.text()
+                if resp.status >= 400:
+                    err = _login_error(landing_html)
+                    raise AuthError(
+                        err
+                        or "Could not grant VW identity client consent automatically. "
+                        f"Login landed at {safe_landing}"
+                    )
+        if "/consent/marketing/" in landing:
+            LOG.info("Skipping optional VW identity marketing consent at %s", safe_landing)
+            marketing_skip = _marketing_skip_url(landing, landing_html)
+            marketing_origin = urlparse(marketing_skip)
+            async with self._session.post(
+                marketing_skip,
+                data=_marketing_payload(landing_html),
+                headers={
+                    "User-Agent": USER_AGENT,
+                    "Referer": landing,
+                    "Origin": f"{marketing_origin.scheme}://{marketing_origin.netloc}",
+                },
+            ) as resp:
+                landing = str(resp.url)
+                safe_landing = _safe_url_for_log(landing)
+                LOG.debug("Marketing consent skip landed at %s", safe_landing)
+                landing_html = await resp.text()
+                if resp.status >= 400:
+                    err = _login_error(landing_html)
+                    raise AuthError(
+                        err
+                        or "Could not skip optional VW identity marketing consent automatically. "
+                        f"Login landed at {safe_landing}"
+                    )
+        if "verification/email-sent" in landing:
             raise AuthError(
-                "The VW identity client requires one-time terms/registration confirmation. "
-                "Log in to the EU Data Act portal in a browser once, accept the terms, "
-                "then run the service again."
+                "The VW identity client requires email verification for this account/client. "
+                "Check the account mailbox, open the Volkswagen verification link, then run "
+                f"the service again. Login landed at {safe_landing}"
             )
         if "signin-service" in landing or "/error" in landing:
             raise AuthError("Login failed. Check email/password or complete browser login first.")
         if urlparse(landing).netloc != portal_host:
-            raise AuthError(f"Login did not complete, ended at {landing}")
+            raise AuthError(f"Login did not complete, ended at {safe_landing}")
 
     def _build_authorize_url(self) -> str:
         params = {
@@ -269,6 +433,27 @@ class EudaApiClient:
             "prompt": "login",
         }
         return f"{OIDC_AUTHORIZE_URL}?{urlencode(params)}"
+
+    async def _get_authorize_url(self) -> str:
+        brand = self._config.brand.upper()
+        redirect_url = f"{BASE_URL}/services/redirect/authentication?{urlencode({'brand': brand, 'method': 'login'})}"
+        try:
+            async with await self._get(
+                redirect_url,
+                headers={"Referer": f"{BASE_URL}/{self._config.country}/{self._config.language}/login.html"},
+            ) as resp:
+                parsed = urlparse(str(resp.url))
+                query = parse_qs(parsed.query)
+                redirect = (query.get("redirect") or [""])[0]
+                if redirect:
+                    LOG.debug(
+                        "Using %s brand authorize URL from portal redirect",
+                        brand,
+                    )
+                    return redirect
+        except aiohttp.ClientError as err:
+            LOG.debug("Could not fetch brand authorize URL, using fallback: %s", err)
+        return self._build_authorize_url()
 
     async def _get_json(
         self,
