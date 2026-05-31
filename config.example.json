@@ -11,7 +11,7 @@
   "publish_unchanged": false,
   "state_file": "data/state.json",
   "mqtt": {
-    "host": "192.168.10.244",
+    "host": "mqtt.example.local",
     "port": 1883,
     "username": "",
     "password": "",
