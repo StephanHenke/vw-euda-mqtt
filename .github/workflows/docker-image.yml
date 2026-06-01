@@ -113,3 +113,60 @@ jobs:
           short-description: VW/Audi EU Data Act MQTT bridge for smart home and energy management
           readme-filepath: ./DOCKERHUB.md
           enable-url-completion: true
+
+      - name: Update Docker Hub categories
+        if: github.event_name != 'pull_request' && env.DOCKERHUB_USERNAME != '' && env.DOCKERHUB_TOKEN != ''
+        shell: python
+        run: |
+          import json
+          import os
+          import sys
+          import urllib.error
+          import urllib.request
+
+          namespace = os.environ["DOCKERHUB_USERNAME"]
+          repository = "vw-euda-mqtt"
+          categories = [
+              "internet-of-things",
+              "message-queues",
+              "developer-tools",
+          ]
+
+          def request(url, payload=None, token=None, method=None):
+              data = None if payload is None else json.dumps(payload).encode("utf-8")
+              headers = {"Content-Type": "application/json"}
+              if token:
+                  headers["Authorization"] = f"Bearer {token}"
+              req = urllib.request.Request(url, data=data, headers=headers, method=method)
+              with urllib.request.urlopen(req, timeout=30) as response:
+                  body = response.read().decode("utf-8")
+                  return response.status, json.loads(body) if body else {}
+
+          _, auth = request(
+              "https://hub.docker.com/v2/auth/token",
+              {
+                  "identifier": namespace,
+                  "secret": os.environ["DOCKERHUB_TOKEN"],
+              },
+          )
+          token = auth["access_token"]
+
+          payload_variants = [
+              {"categories": categories},
+              {"categories": [{"slug": slug} for slug in categories]},
+          ]
+          errors = []
+          for payload in payload_variants:
+              try:
+                  status, repo = request(
+                      f"https://hub.docker.com/v2/repositories/{namespace}/{repository}/",
+                      payload,
+                      token=token,
+                      method="PATCH",
+                  )
+                  print("Docker Hub categories updated:", repo.get("categories", []))
+                  sys.exit(0)
+              except urllib.error.HTTPError as err:
+                  errors.append(f"{err.code}: {err.read().decode('utf-8', errors='replace')[:500]}")
+
+          raise SystemExit("Could not update Docker Hub categories: " + " | ".join(errors))
