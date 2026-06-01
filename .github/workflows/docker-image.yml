@@ -102,3 +102,14 @@ jobs:
           labels: ${{ steps.dockerhub_meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Update Docker Hub description
+        if: github.event_name != 'pull_request' && env.DOCKERHUB_USERNAME != '' && env.DOCKERHUB_TOKEN != ''
+        uses: peter-evans/dockerhub-description@v5
+        with:
+          username: ${{ env.DOCKERHUB_USERNAME }}
+          password: ${{ env.DOCKERHUB_TOKEN }}
+          repository: ${{ env.DOCKERHUB_USERNAME }}/vw-euda-mqtt
+          short-description: VW/Audi EU Data Act MQTT bridge for smart home and energy management
+          readme-filepath: ./DOCKERHUB.md
+          enable-url-completion: true
