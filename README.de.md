@@ -147,7 +147,23 @@ uv run vw-euda-mqtt --config config.json
 
 ## Docker-Betrieb
 
-Im Projektordner:
+Fertige Images werden in der GitHub Container Registry veröffentlicht. Ein
+Docker-Hub-Konto ist dafür nicht notwendig:
+
+```bash
+docker pull ghcr.io/stephanhenke/vw-euda-mqtt:latest
+```
+
+Nutzung des veröffentlichten Images mit Docker Compose:
+
+```bash
+cp config.example.json config.json
+cp docker-compose.example.yml docker-compose.yml
+mkdir -p data
+docker compose up -d
+```
+
+Lokaler Entwicklungs-Build im Projektordner:
 
 ```bash
 cp config.example.json config.json

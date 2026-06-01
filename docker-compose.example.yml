@@ -1,6 +1,6 @@
 services:
   vw-euda-mqtt:
-    build: .
+    image: ghcr.io/stephanhenke/vw-euda-mqtt:latest
     container_name: vw-euda-mqtt
     restart: unless-stopped
     environment:

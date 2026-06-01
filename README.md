@@ -145,6 +145,25 @@ uv run vw-euda-mqtt --config config.json
 
 ## Docker
 
+Prebuilt images are published to GitHub Container Registry. No Docker Hub
+account is required:
+
+```bash
+docker pull ghcr.io/stephanhenke/vw-euda-mqtt:latest
+```
+
+Use the published image with Docker Compose:
+
+```bash
+cp config.example.json config.json
+cp docker-compose.example.yml docker-compose.yml
+mkdir -p data
+docker compose up -d
+docker logs -f vw-euda-mqtt
+```
+
+For local development, build the image from this checkout:
+
 ```bash
 cp config.example.json config.json
 mkdir -p data
