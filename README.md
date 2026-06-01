@@ -2,8 +2,10 @@
 
 [Deutsch](README.de.md)
 
-A small standalone bridge that reads vehicle data from the Volkswagen Group EU
-Data Act portal and publishes selected values to MQTT.
+This project retrieves vehicle data made available through the Volkswagen Group
+EU Data Act portal and forwards it in a structured form to an MQTT broker. The
+goal is to make these values available to smart home systems, energy management
+systems, and similar local automation platforms.
 
 The service logs in to `eu-data-act.drivesomethinggreater.com`, follows the
 portal's brand-specific login redirect, downloads the latest continuous-data ZIP
@@ -23,6 +25,7 @@ The login and dataset approach is based on
 - Skips `*_no_content_found.zip` files because they do not contain vehicle
   payload.
 - Publishes normalized vehicle values and optional raw data to MQTT.
+- Makes the data available for smart home and energy management use cases.
 
 This service does not create the EU Data Act data request. It only consumes ZIP
 datasets that the portal has already generated.

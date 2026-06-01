@@ -2,8 +2,11 @@
 
 [English](README.md)
 
-Kleiner eigenständiger Dienst, der Daten aus dem Volkswagen Group EU Data Act
-Portal abholt und als MQTT-Topics veröffentlicht.
+Dieses Projekt soll Fahrzeugdaten abrufen, die über das EU Data Act Portal des
+Volkswagen Konzerns bereitgestellt werden, und sie strukturiert an einen MQTT
+Broker weiterleiten. Ziel ist, diese Werte in Smart-Home-Systemen,
+Energiemanagementsystemen und ähnlichen lokalen Automatisierungsplattformen
+bereitzustellen.
 
 Der Dienst meldet sich bei `eu-data-act.drivesomethinggreater.com` an, wählt die
 konfigurierte Marke aus, liest die neueste Continuous-Data-ZIP-Datei für eine
@@ -22,6 +25,7 @@ Der Login- und Dataset-Ansatz basiert auf
 - Überspringen von `*_no_content_found.zip`, weil diese Dateien keine
   Fahrzeugdaten enthalten.
 - MQTT-Publish der wichtigsten Werte und optional der Rohdaten.
+- Bereitstellung der Daten für Smart-Home- und Energiemanagement-Anwendungen.
 
 Der Dienst erstellt keine Datenanfrage im Portal. Er kann nur ZIP-Dateien
 abrufen, die das Portal bereits erzeugt.
