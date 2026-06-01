@@ -147,20 +147,21 @@ uv run vw-euda-mqtt --config config.json
 
 ## Docker-Betrieb
 
-Fertige Images werden in der GitHub Container Registry veröffentlicht. Ein
-Docker-Hub-Konto ist dafür nicht notwendig:
+Fertige Images werden auf Docker Hub und in der GitHub Container Registry
+veröffentlicht:
+
+```bash
+docker pull stephanhenke/vw-euda-mqtt:latest
+```
+
+Dasselbe Image ist zusätzlich über die GitHub Container Registry verfügbar:
 
 ```bash
 docker pull ghcr.io/stephanhenke/vw-euda-mqtt:latest
 ```
 
-Der GitHub-Actions-Workflow kann dasselbe Image zusätzlich auf Docker Hub
-veröffentlichen, wenn die Repository-Secrets `DOCKERHUB_USERNAME` und
-`DOCKERHUB_TOKEN` gesetzt sind:
-
-```bash
-docker pull <dockerhub-username>/vw-euda-mqtt:latest
-```
+Der GitHub-Actions-Workflow veröffentlicht auf Docker Hub, wenn die
+Repository-Secrets `DOCKERHUB_USERNAME` und `DOCKERHUB_TOKEN` gesetzt sind.
 
 Nutzung des veröffentlichten Images mit Docker Compose:
 

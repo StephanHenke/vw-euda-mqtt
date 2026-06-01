@@ -145,19 +145,20 @@ uv run vw-euda-mqtt --config config.json
 
 ## Docker
 
-Prebuilt images are published to GitHub Container Registry. No Docker Hub
-account is required:
+Prebuilt images are published to Docker Hub and GitHub Container Registry:
+
+```bash
+docker pull stephanhenke/vw-euda-mqtt:latest
+```
+
+The same image is also available from GitHub Container Registry:
 
 ```bash
 docker pull ghcr.io/stephanhenke/vw-euda-mqtt:latest
 ```
 
-The GitHub Actions workflow can also publish the same image to Docker Hub when
-the repository secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` are set:
-
-```bash
-docker pull <dockerhub-username>/vw-euda-mqtt:latest
-```
+The GitHub Actions workflow publishes to Docker Hub when the repository secrets
+`DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` are set.
 
 Use the published image with Docker Compose:
 
