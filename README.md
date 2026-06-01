@@ -152,6 +152,13 @@ account is required:
 docker pull ghcr.io/stephanhenke/vw-euda-mqtt:latest
 ```
 
+The GitHub Actions workflow can also publish the same image to Docker Hub when
+the repository secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` are set:
+
+```bash
+docker pull <dockerhub-username>/vw-euda-mqtt:latest
+```
+
 Use the published image with Docker Compose:
 
 ```bash
