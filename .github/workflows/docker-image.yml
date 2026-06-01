@@ -142,14 +142,29 @@ jobs:
                   body = response.read().decode("utf-8")
                   return response.status, json.loads(body) if body else {}
 
-          _, auth = request(
-              "https://hub.docker.com/v2/auth/token",
-              {
-                  "identifier": namespace,
-                  "secret": os.environ["DOCKERHUB_TOKEN"],
-              },
-          )
-          token = auth["access_token"]
+          auth_errors = []
+          auth_payloads = [
+              (
+                  "https://hub.docker.com/v2/auth/token",
+                  {"identifier": namespace, "secret": os.environ["DOCKERHUB_TOKEN"]},
+                  "access_token",
+              ),
+              (
+                  "https://hub.docker.com/v2/users/login",
+                  {"username": namespace, "password": os.environ["DOCKERHUB_TOKEN"]},
+                  "token",
+              ),
+          ]
+          token = None
+          for auth_url, auth_payload, token_field in auth_payloads:
+              try:
+                  _, auth = request(auth_url, auth_payload)
+                  token = auth[token_field]
+                  break
+              except urllib.error.HTTPError as err:
+                  auth_errors.append(f"{auth_url} -> {err.code}")
+          if not token:
+              raise SystemExit("Could not authenticate with Docker Hub: " + " | ".join(auth_errors))
 
           payload_variants = [
               {"categories": categories},
