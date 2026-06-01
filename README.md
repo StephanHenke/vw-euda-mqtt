@@ -235,6 +235,12 @@ Can be a transient portal backend error. The service retries after
 
 ## Security Notes
 
+Using account email and password is a pragmatic workaround for the current
+browser-oriented portal flow. It is not the preferred long-term design. In this
+project's view, a cleaner solution would be a dedicated API key or token issued
+through the user's VW/Audi account, so third-party services can be authorized
+without storing the account password.
+
 - `config.json` is ignored because it contains account and MQTT credentials.
 - `access.txt` is ignored because it can contain deployment host credentials.
 - `data/` is ignored and only stores runtime state.

@@ -253,6 +253,13 @@ Kann beim Portal transient auftreten. Der Dienst wiederholt den Poll nach
 
 ## Git- und Sicherheitsnotizen
 
+Die Nutzung von Konto-E-Mail und Passwort ist eine pragmatische Lösung für den
+aktuellen, browserorientierten Portalfluss. Sie ist ausdrücklich nicht die
+feinste langfristige Lösung. Aus Sicht dieses Projekts wäre ein eigener API-Key
+oder Token sauberer, der über das VW/Audi-Benutzerkonto ausgegeben wird, damit
+Drittdienste autorisiert werden können, ohne das eigentliche Kontopasswort zu
+speichern.
+
 - `config.json` ist ignoriert, weil es Konto- und MQTT-Zugangsdaten enthält.
 - `access.txt` ist ignoriert, weil dort VM-Zugangsdaten liegen können.
 - `data/` ist ignoriert und enthält nur Laufzeitstatus.
