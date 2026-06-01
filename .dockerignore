@@ -1,0 +1,16 @@
+.git
+.github
+.venv
+__pycache__
+*.pyc
+
+config.json
+data/
+access.txt
+
+.env
+.env.*
+*.secret
+*.secrets
+
+assets/
