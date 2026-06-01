@@ -238,7 +238,7 @@ def _extract_vins(payload) -> list[dict]:
             if isinstance(vin, str) and len(vin) == 17:
                 vins.setdefault(vin, {"vin": vin})
                 nick = node.get("vehicleNickname") or node.get("nickname") or node.get("modelName")
-                if nick:
+                if nick and not vins[vin].get("nickname"):
                     vins[vin]["nickname"] = nick
             for value in node.values():
                 walk(value)
