@@ -26,6 +26,21 @@ Der Login- und Dataset-Ansatz basiert auf
 Der Dienst erstellt keine Datenanfrage im Portal. Er kann nur ZIP-Dateien
 abrufen, die das Portal bereits erzeugt.
 
+## Aktuelle Einschränkung
+
+Der Dienst ist gegen die Datenübertragung entwickelt, die Volkswagen Group über
+das EU Data Act Portal bereitstellt: Er meldet sich an, liest die Metadaten der
+aktiven Datenanfrage, listet erzeugte ZIP-Datasets, überspringt leere
+Platzhalter-ZIPs, lädt echte ZIP-Inhalte herunter und veröffentlicht deren Werte
+nach MQTT.
+
+In den bisherigen Audi/VW-Portaltests wurden jedoch nur
+`*_no_content_found.zip`-Platzhalterdateien erzeugt. Aktuell ist in diesem
+Projekt noch kein verlässlicher Weg bekannt, mit dem Fahrzeugdaten nach dem
+Anlegen der Datenanfrage sauber im Portal erscheinen. Der Dienst kann deshalb
+technisch verbunden und fehlerfrei laufen, ohne dass bereits Fahrzeugwerte zum
+Veröffentlichen vorhanden sind.
+
 ## Voraussetzungen im Portal
 
 1. Einmal im Browser auf <https://eu-data-act.drivesomethinggreater.com/>
@@ -221,7 +236,9 @@ Datenanfrage aktiv.
 
 Login, Marke und Identifier funktionieren. Das Portal erzeugt aber aktuell nur
 `*_no_content_found.zip`. Warten, bis eine ZIP-Datei mit echtem Inhalt vorhanden
-ist.
+ist. In den bisherigen Tests wurde noch kein verlässlicher Weg gefunden, wie
+Audi/VW-Fahrzeugdaten sauber im EU Data Act Portal ankommen; sobald das Portal
+ein nicht-leeres Dataset bereitstellt, verarbeitet der Dienst es automatisch.
 
 `HTTP 401`
 

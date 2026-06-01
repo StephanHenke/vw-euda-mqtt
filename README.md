@@ -27,6 +27,20 @@ The login and dataset approach is based on
 This service does not create the EU Data Act data request. It only consumes ZIP
 datasets that the portal has already generated.
 
+## Current Limitation
+
+The service is implemented against the data transfer that Volkswagen Group
+exposes through the EU Data Act portal: it logs in, reads the active data
+request metadata, lists generated ZIP datasets, skips empty placeholder ZIPs,
+downloads real ZIP payloads, and publishes their contents to MQTT.
+
+In practice, current Audi/VW portal tests have only produced
+`*_no_content_found.zip` placeholder files so far. At the moment, no reliable
+procedure is known in this project that makes vehicle data appear cleanly in the
+portal after the data request has been created. This means the bridge can be
+technically connected and healthy while still having no vehicle values to
+publish.
+
 ## Portal Setup
 
 1. Open <https://eu-data-act.drivesomethinggreater.com/> in a browser.
@@ -205,7 +219,9 @@ Data Act portal.
 
 Login, brand selection, and identifier lookup work. The portal currently only
 generates `*_no_content_found.zip` files. Wait until a ZIP with real content is
-available.
+available. Current testing has not yet identified a reliable way to make Audi/VW
+vehicle data arrive in the EU Data Act portal; the service will process it
+automatically once the portal provides a non-empty dataset.
 
 `HTTP 401`
 
