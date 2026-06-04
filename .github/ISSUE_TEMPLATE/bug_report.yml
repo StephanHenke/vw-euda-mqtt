@@ -1,0 +1,49 @@
+name: Bug report
+description: Report a reproducible problem with vw-euda-mqtt
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please do not include passwords, tokens, full VINs, email addresses, hostnames, or unredacted dataset payloads.
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: Describe the behavior and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Include the command, Docker image tag, and relevant config shape with secrets removed.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Redacted logs
+      description: Paste only logs with secrets, full VINs, emails, and hostnames removed.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: Version or image tag
+      placeholder: "0.1.2 / latest / ghcr.io/...:v0.1.2"
+  - type: dropdown
+    id: brand
+    attributes:
+      label: Brand
+      options:
+        - Audi
+        - Volkswagen
+        - Other VW Group brand
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Privacy check
+      options:
+        - label: I removed passwords, tokens, full VINs, email addresses, hostnames, and private dataset values.
+          required: true

@@ -5,6 +5,15 @@ services:
     restart: unless-stopped
     environment:
       - TZ=Europe/Berlin
+      # Optional secret overrides. Prefer Docker secrets or host-level
+      # environment injection instead of committing real values here.
+      # - VW_EUDA_EMAIL=
+      # - VW_EUDA_PASSWORD=
+      # - VW_EUDA_VIN=
+      # - VW_EUDA_IDENTIFIER=
+      # - VW_EUDA_MQTT_HOST=
+      # - VW_EUDA_MQTT_USERNAME=
+      # - VW_EUDA_MQTT_PASSWORD=
     volumes:
       - ./config.json:/config/config.json:ro
       - ./data:/config/data

@@ -1,0 +1,45 @@
+name: New data point
+description: Suggest or document a VW/Audi EU Data Act data point
+title: "[Data point]: "
+labels: ["data-point"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please use a redacted sample shaped like `tests/fixtures/audi_dataset_redacted.json`. Do not upload real VINs, account IDs, emails, coordinates, or unredacted ZIP files.
+  - type: input
+    id: source_field
+    attributes:
+      label: Source field name
+      description: The `dataFieldName` from the EU Data Act payload.
+      placeholder: "battery_state_report.soc"
+    validations:
+      required: true
+  - type: input
+    id: proposed_topic
+    attributes:
+      label: Proposed MQTT topic
+      description: The normalized topic you would expect.
+      placeholder: "battery/soc"
+  - type: textarea
+    id: redacted_sample
+    attributes:
+      label: Redacted payload sample
+      description: Include only the relevant redacted `Data` entries.
+      render: json
+    validations:
+      required: true
+  - type: textarea
+    id: meaning
+    attributes:
+      label: Meaning and unit
+      description: Explain what the value means, expected unit, and any known value range.
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Privacy check
+      options:
+        - label: I redacted VINs, user IDs, emails, hostnames, coordinates, and any personal values.
+          required: true

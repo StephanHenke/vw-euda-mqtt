@@ -57,6 +57,23 @@ the GitHub repository:
 
 https://github.com/StephanHenke/vw-euda-mqtt
 
+## Diagnostics and Health
+
+Check portal, vehicle, dataset listing, and MQTT access without printing
+configured secrets:
+
+```bash
+docker run --rm \
+  -v "$PWD/config.json:/config/config.json:ro" \
+  -v "$PWD/data:/config/data" \
+  stephanhenke/vw-euda-mqtt:latest \
+  --config /config/config.json --diagnose
+```
+
+The image includes a Docker `HEALTHCHECK`. It reads the configured `state_file`
+and reports unhealthy when no successful dataset publish is recorded or the last
+one is older than four polling intervals, with a minimum threshold of one hour.
+
 ## Current Limitation
 
 The bridge is built against the data transfer that Volkswagen Group exposes
@@ -75,6 +92,7 @@ Published tags include:
 ```text
 latest
 main
+0.1.2
 ```
 
 The image is built for:

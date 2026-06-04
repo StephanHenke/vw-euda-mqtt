@@ -1,0 +1,36 @@
+# Example evcc configuration snippet for vw-euda-mqtt.
+# Replace the broker, credentials, VIN, capacity, charger, and loadpoint values.
+# If you already have an evcc vehicle, keep its existing `name` to preserve
+# loadpoint assignment and keep `title` stable for a coherent charging history.
+
+mqtt:
+  broker: mqtt.example.local:1883
+  user: mqtt-user
+  password: mqtt-password
+  topic: evcc
+
+vehicles:
+  - name: audi
+    type: custom
+    title: Audi Q4 e-tron
+    icon: car
+    capacity: 76
+    soc:
+      source: mqtt
+      topic: vw/euda/WAUZZZ00000000000/battery/soc
+      timeout: 72h
+    limitsoc:
+      source: mqtt
+      topic: vw/euda/WAUZZZ00000000000/battery/target_soc
+      timeout: 72h
+    odometer:
+      source: mqtt
+      topic: vw/euda/WAUZZZ00000000000/odometer/km
+      timeout: 720h
+    features:
+      - streaming
+
+loadpoints:
+  - title: Wallbox
+    charger: wallbox
+    vehicle: audi

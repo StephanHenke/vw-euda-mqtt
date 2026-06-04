@@ -5,6 +5,39 @@ All notable changes to this project are documented in this file.
 The format follows the spirit of Keep a Changelog, and this project uses
 semantic versioning.
 
+## [Unreleased]
+
+## [0.1.2] - 2026-06-04
+
+### Added
+
+- Add German/English evcc integration documentation and an MQTT vehicle example.
+- Add `--diagnose` to check configuration, MQTT connectivity, portal login,
+  vehicle selection, continuous-data identifier lookup, and dataset listing
+  without printing configured secrets.
+- Add `--healthcheck` and a Docker `HEALTHCHECK` for recent successful dataset
+  processing.
+- Add environment variable overrides for account, VIN, identifier, and MQTT
+  secrets.
+- Add MQTT status topics for `status/last_poll_at`,
+  `status/data_age_seconds`, `status/stale`, and `status/service_version`.
+- Add a redacted Audi dataset fixture and GitHub issue templates for bugs and
+  new data-point reports.
+- Add `SECURITY.md` with secret handling and dataset redaction guidance.
+
+### Changed
+
+- Keep the last plausible normalized `odometer/km` value when a newer dataset
+  reports `0`, a non-numeric value, or a decreasing odometer.
+- Catch unexpected runtime errors in the polling loop, publish retained error
+  status, and continue after the retry interval.
+- Document the normalized MQTT topic table in the German and English READMEs.
+
+### Security
+
+- Document that real datasets, VINs, account details, and deployment secrets
+  must be redacted before being shared in public issues or fixtures.
+
 ## [0.1.1] - 2026-06-04
 
 ### Changed

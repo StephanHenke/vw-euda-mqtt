@@ -6,7 +6,9 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 import signal
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -15,10 +17,12 @@ from typing import Any
 import aiohttp
 import paho.mqtt.client as mqtt
 
+from . import __version__
 from .api import ApiError, AuthError, EudaApiClient, NO_CONTENT_SUFFIX, PortalConfig
 from .data import Dataset, curated_values, raw_values
 
 LOG = logging.getLogger(__name__)
+HEALTHCHECK_MISSED_POLLS = 4
 
 
 @dataclass(frozen=True)
@@ -55,11 +59,17 @@ class ServiceConfig:
     def from_file(cls, path: Path) -> "ServiceConfig":
         raw = json.loads(path.read_text(encoding="utf-8-sig"))
         mqtt_raw = raw.get("mqtt") or {}
+        email = _env_value("VW_EUDA_EMAIL") or raw.get("email")
+        password = _env_value("VW_EUDA_PASSWORD") or raw.get("password")
+        if not email:
+            raise ValueError("Missing email in config or VW_EUDA_EMAIL")
+        if not password:
+            raise ValueError("Missing password in config or VW_EUDA_PASSWORD")
         mqtt_config = MqttConfig(
-            host=mqtt_raw.get("host", "localhost"),
+            host=_env_value("VW_EUDA_MQTT_HOST") or mqtt_raw.get("host", "localhost"),
             port=int(mqtt_raw.get("port", 1883)),
-            username=mqtt_raw.get("username") or None,
-            password=mqtt_raw.get("password") or None,
+            username=_env_value("VW_EUDA_MQTT_USERNAME") or mqtt_raw.get("username") or None,
+            password=_env_value("VW_EUDA_MQTT_PASSWORD") or mqtt_raw.get("password") or None,
             client_id=mqtt_raw.get("client_id") or "vw-euda-mqtt",
             base_topic=(mqtt_raw.get("base_topic") or "vw/euda").strip("/"),
             retain=bool(mqtt_raw.get("retain", True)),
@@ -69,13 +79,13 @@ class ServiceConfig:
             carcompat_base_topic=(mqtt_raw.get("carcompat_base_topic") or "car").strip("/"),
         )
         return cls(
-            email=raw["email"],
-            password=raw["password"],
+            email=email,
+            password=password,
             brand=raw.get("brand") or "AUDI",
             country=raw.get("country") or "de",
             language=raw.get("language") or "de",
-            vin=raw.get("vin") or None,
-            identifier=raw.get("identifier") or None,
+            vin=_env_value("VW_EUDA_VIN") or raw.get("vin") or None,
+            identifier=_env_value("VW_EUDA_IDENTIFIER") or raw.get("identifier") or None,
             poll_interval_seconds=int(raw.get("poll_interval_seconds", 900)),
             retry_interval_seconds=int(raw.get("retry_interval_seconds", 60)),
             publish_unchanged=bool(raw.get("publish_unchanged", False)),
@@ -106,7 +116,9 @@ class MqttPublisher:
         client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=self.config.client_id)
         if self.config.username:
             client.username_pw_set(self.config.username, self.config.password)
-        client.connect(self.config.host, self.config.port, keepalive=60)
+        rc = client.connect(self.config.host, self.config.port, keepalive=60)
+        if rc != mqtt.MQTT_ERR_SUCCESS:
+            raise RuntimeError(f"MQTT connect failed: rc={rc}")
         client.loop_start()
         self.client = client
         return self
@@ -143,6 +155,13 @@ def _mqtt_payload(value: Any) -> str:
     return str(value)
 
 
+def _env_value(name: str) -> str | None:
+    value = os.environ.get(name)
+    if value is None or value == "":
+        return None
+    return value
+
+
 def _state_path(config_path: Path, state_file: str) -> Path:
     path = Path(state_file)
     return path if path.is_absolute() else config_path.parent / path
@@ -162,6 +181,43 @@ def _save_state(path: Path, state: dict) -> None:
 
 def _status_vin(config: ServiceConfig, vin: str | None = None) -> str:
     return vin or config.vin or "_service"
+
+
+def _parse_datetime(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _state_car_captured_at(state: dict) -> datetime | None:
+    return _parse_datetime(state.get("last_car_captured_at"))
+
+
+def _status_timing_values(
+    config: ServiceConfig,
+    *,
+    now: datetime,
+    car_captured_at: datetime | None,
+) -> dict[str, Any]:
+    values: dict[str, Any] = {
+        "last_poll_at": now.isoformat(),
+        "service_version": __version__,
+        "data_age_seconds": "",
+        "stale": "",
+    }
+    if car_captured_at is None:
+        return values
+
+    age = max(0, int((now - car_captured_at).total_seconds()))
+    values["data_age_seconds"] = age
+    values["stale"] = age > config.poll_interval_seconds * 2
+    return values
 
 
 def _created_on(entry: dict) -> datetime | None:
@@ -201,6 +257,43 @@ def _is_dataset_listing_pending(err: ApiError) -> bool:
     )
 
 
+def _numeric_value(value: Any) -> float | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value.strip())
+        except ValueError:
+            return None
+    return None
+
+
+def _stabilize_odometer(values: dict[str, Any], state: dict) -> None:
+    if "odometer/km" not in values:
+        return
+
+    current = _numeric_value(values["odometer/km"])
+    previous = _numeric_value(state.get("last_odometer_km"))
+
+    if current is None or current <= 0:
+        if previous is not None:
+            LOG.warning("Ignoring implausible odometer value %r, keeping %s km", values["odometer/km"], previous)
+            values["odometer/km"] = int(previous) if previous.is_integer() else previous
+        else:
+            LOG.warning("Ignoring implausible odometer value %r without previous fallback", values["odometer/km"])
+            values.pop("odometer/km", None)
+        return
+
+    if previous is not None and current < previous:
+        LOG.warning("Ignoring decreasing odometer value %s km, keeping %s km", current, previous)
+        values["odometer/km"] = int(previous) if previous.is_integer() else previous
+        return
+
+    state["last_odometer_km"] = int(current) if current.is_integer() else current
+
+
 async def _select_vehicle_and_identifier(client: EudaApiClient, config: ServiceConfig) -> tuple[str, str]:
     vin = config.vin
     if not vin:
@@ -227,6 +320,7 @@ async def _select_vehicle_and_identifier(client: EudaApiClient, config: ServiceC
 async def poll_once(config: ServiceConfig, config_path: Path, dry_run: bool = False) -> int:
     state_path = _state_path(config_path, config.state_file)
     state = _load_state(state_path)
+    state_car_captured_at = _state_car_captured_at(state)
 
     async with aiohttp.ClientSession(cookie_jar=aiohttp.CookieJar()) as session:
         client = EudaApiClient(session, config.portal)
@@ -244,6 +338,7 @@ async def poll_once(config: ServiceConfig, config_path: Path, dry_run: bool = Fa
                 connected=True,
                 error=message,
                 error_type="PendingData",
+                car_captured_at=state_car_captured_at,
                 dry_run=dry_run,
             )
             return config.retry_interval_seconds
@@ -260,6 +355,7 @@ async def poll_once(config: ServiceConfig, config_path: Path, dry_run: bool = Fa
                 connected=True,
                 error=message,
                 error_type="PendingData",
+                car_captured_at=state_car_captured_at,
                 dry_run=dry_run,
             )
             return _next_sleep(listing, config.poll_interval_seconds, config.retry_interval_seconds)
@@ -268,19 +364,22 @@ async def poll_once(config: ServiceConfig, config_path: Path, dry_run: bool = Fa
         name = newest["name"]
         if not config.publish_unchanged and state.get("last_dataset") == name:
             LOG.info("No new dataset: %s", name)
-            publish_status(config, vin, connected=True, dry_run=dry_run)
+            publish_status(config, vin, connected=True, car_captured_at=state_car_captured_at, dry_run=dry_run)
             return _next_sleep(listing, config.poll_interval_seconds, config.retry_interval_seconds)
 
         payload = await client.async_download_dataset(vin, identifier, name)
         dataset = Dataset.from_json(payload)
-        publish_dataset(config, vin, name, dataset, payload, dry_run=dry_run)
+        publish_dataset(config, vin, name, dataset, payload, state=state, dry_run=dry_run)
 
+        now = datetime.now(timezone.utc)
         state.update(
             {
                 "vin": vin,
                 "identifier": identifier,
                 "last_dataset": name,
-                "last_publish": datetime.now(timezone.utc).isoformat(),
+                "last_car_captured_at": dataset.captured_at.isoformat() if dataset.captured_at else "",
+                "last_publish": now.isoformat(),
+                "last_success_at": now.isoformat(),
             }
         )
         if not dry_run:
@@ -295,10 +394,12 @@ def publish_dataset(
     dataset: Dataset,
     raw_payload: dict,
     *,
+    state: dict | None = None,
     dry_run: bool = False,
 ) -> None:
     assert config.mqtt is not None
     base = f"{config.mqtt.base_topic}/{vin}"
+    now = datetime.now(timezone.utc)
     values: dict[str, Any] = {
         "status/online": True,
         "status/connected": True,
@@ -307,10 +408,18 @@ def publish_dataset(
         "status/last_dataset": dataset_name,
         "status/captured_at": dataset.captured_at.isoformat() if dataset.captured_at else "",
         "status/car_captured_at": dataset.captured_at.isoformat() if dataset.captured_at else "",
-        "status/last_success_at": datetime.now(timezone.utc).isoformat(),
+        "status/last_success_at": now.isoformat(),
         "json": raw_payload,
     }
+    values.update(
+        {
+            f"status/{topic}": value
+            for topic, value in _status_timing_values(config, now=now, car_captured_at=dataset.captured_at).items()
+        }
+    )
     values.update(curated_values(dataset))
+    if state is not None:
+        _stabilize_odometer(values, state)
     if config.mqtt.publish_raw:
         values.update(raw_values(dataset))
 
@@ -328,6 +437,7 @@ def publish_status(
     connected: bool,
     error: str = "",
     error_type: str = "",
+    car_captured_at: datetime | None = None,
     dry_run: bool = False,
 ) -> None:
     assert config.mqtt is not None
@@ -341,6 +451,7 @@ def publish_status(
         "last_error_at": "",
         "last_status_at": now,
     }
+    values.update(_status_timing_values(config, now=datetime.fromisoformat(now), car_captured_at=car_captured_at))
     if connected:
         values["last_success_at"] = now
     else:
@@ -408,6 +519,10 @@ async def run_service(config: ServiceConfig, config_path: Path, once: bool, dry_
             LOG.error("Poll failed: %s", err)
             publish_error_status(config, err, dry_run=dry_run)
             sleep_seconds = config.retry_interval_seconds
+        except Exception as err:
+            LOG.exception("Unexpected poll failure")
+            publish_error_status(config, err, dry_run=dry_run)
+            sleep_seconds = config.retry_interval_seconds
         if once:
             return
         try:
@@ -416,12 +531,93 @@ async def run_service(config: ServiceConfig, config_path: Path, once: bool, dry_
             pass
 
 
+def healthcheck(config: ServiceConfig, config_path: Path) -> int:
+    state = _load_state(_state_path(config_path, config.state_file))
+    last_success = _parse_datetime(state.get("last_success_at") or state.get("last_publish"))
+    if last_success is None:
+        print("unhealthy: no successful dataset publish recorded", file=sys.stderr)
+        return 1
+
+    now = datetime.now(timezone.utc)
+    age = max(0, int((now - last_success).total_seconds()))
+    max_age = max(config.poll_interval_seconds * HEALTHCHECK_MISSED_POLLS, 3600)
+    if age <= max_age:
+        print(f"healthy: last successful dataset publish {age}s ago")
+        return 0
+
+    print(f"unhealthy: last successful dataset publish {age}s ago exceeds {max_age}s", file=sys.stderr)
+    return 1
+
+
+def _mask_identifier(value: str | None, visible: int = 4) -> str:
+    if not value:
+        return "not configured"
+    if len(value) <= visible * 2:
+        return "<redacted>"
+    return f"{value[:visible]}...{value[-visible:]}"
+
+
+def _redact_text(text: str, *values: str | None) -> str:
+    redacted = text
+    for value in values:
+        if value:
+            redacted = redacted.replace(value, "<redacted>")
+    return redacted
+
+
+def check_mqtt_connection(config: MqttConfig, dry_run: bool = False) -> None:
+    if dry_run:
+        return
+    with MqttPublisher(config):
+        return
+
+
+async def run_diagnose(config: ServiceConfig, config_path: Path, dry_run: bool = False) -> int:
+    assert config.mqtt is not None
+    selected_vin: str | None = None
+    selected_identifier: str | None = None
+    print("Configuration: ok")
+    print(f"Brand: {config.brand.upper()} / locale {config.country}-{config.language}")
+    print(f"Configured VIN: {_mask_identifier(config.vin)}")
+    print(f"State file: {_state_path(config_path, config.state_file)}")
+
+    try:
+        check_mqtt_connection(config.mqtt, dry_run=dry_run)
+        print("MQTT connection: ok" if not dry_run else "MQTT connection: skipped in dry-run")
+
+        async with aiohttp.ClientSession(cookie_jar=aiohttp.CookieJar()) as session:
+            client = EudaApiClient(session, config.portal)
+            await client.async_login()
+            print("Portal login: ok")
+            selected_vin, selected_identifier = await _select_vehicle_and_identifier(client, config)
+            print(f"Vehicle: {_mask_identifier(selected_vin)}")
+            print(f"Continuous-data identifier: {_mask_identifier(selected_identifier)}")
+            listing = await client.async_list_datasets(selected_vin, selected_identifier)
+            content = [entry for entry in listing if entry.get("name") and not entry["name"].endswith(NO_CONTENT_SUFFIX)]
+            print(f"Dataset listing: ok ({len(listing)} files, {len(content)} content files)")
+    except Exception as err:
+        message = _redact_text(
+            str(err),
+            config.email,
+            config.password,
+            config.vin,
+            config.identifier,
+            selected_vin,
+            selected_identifier,
+        )
+        print(f"Diagnosis failed: {type(err).__name__}: {message}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="VW EU Data Act to MQTT bridge")
     parser.add_argument("--config", required=True, type=Path, help="Path to config JSON")
     parser.add_argument("--once", action="store_true", help="Run one poll and exit")
     parser.add_argument("--dry-run", action="store_true", help="Print MQTT publishes instead of sending")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
+    parser.add_argument("--diagnose", action="store_true", help="Check portal, vehicle, dataset and MQTT access")
+    parser.add_argument("--healthcheck", action="store_true", help="Check recent successful dataset processing")
     return parser
 
 
@@ -432,6 +628,10 @@ def main(argv: list[str] | None = None) -> int:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
     config = ServiceConfig.from_file(args.config)
+    if args.healthcheck:
+        return healthcheck(config, args.config)
+    if args.diagnose:
+        return asyncio.run(run_diagnose(config, args.config, dry_run=args.dry_run))
     try:
         asyncio.run(run_service(config, args.config, once=args.once, dry_run=args.dry_run))
     except KeyboardInterrupt:

@@ -1,6 +1,6 @@
 [project]
 name = "vw-euda-mqtt"
-version = "0.1.1"
+version = "0.1.2"
 description = "Small VW EU Data Act to MQTT bridge"
 requires-python = ">=3.11"
 dependencies = [

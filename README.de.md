@@ -1,5 +1,9 @@
 # VW EU Data Act MQTT Service
 
+[![Tests](https://github.com/StephanHenke/vw-euda-mqtt/actions/workflows/tests.yml/badge.svg)](https://github.com/StephanHenke/vw-euda-mqtt/actions/workflows/tests.yml)
+[![Docker Image](https://github.com/StephanHenke/vw-euda-mqtt/actions/workflows/docker-image.yml/badge.svg)](https://github.com/StephanHenke/vw-euda-mqtt/actions/workflows/docker-image.yml)
+[![Docker Pulls](https://img.shields.io/docker/pulls/stephanhenke/vw-euda-mqtt)](https://hub.docker.com/r/stephanhenke/vw-euda-mqtt)
+
 [English](README.md)
 
 Dieses Projekt soll Fahrzeugdaten abrufen, die über das EU Data Act Portal des
@@ -122,7 +126,26 @@ Wichtige Felder:
 `config.json` enthält Zugangsdaten und ist deshalb per `.gitignore` vom Git-Repo
 ausgeschlossen.
 
+Diese Umgebungsvariablen überschreiben `config.json` und sind nützlich für
+Docker, Proxmox, NAS-Systeme und Secret-Manager:
+
+```text
+VW_EUDA_EMAIL
+VW_EUDA_PASSWORD
+VW_EUDA_VIN
+VW_EUDA_IDENTIFIER
+VW_EUDA_MQTT_HOST
+VW_EUDA_MQTT_USERNAME
+VW_EUDA_MQTT_PASSWORD
+```
+
 ## Lokal testen
+
+Einrichtungsdiagnose ohne Ausgabe von Zugangsdaten:
+
+```powershell
+uv run vw-euda-mqtt --config config.json --diagnose
+```
 
 ```powershell
 uv run vw-euda-mqtt --config config.json --once --dry-run --debug
@@ -144,6 +167,13 @@ Dauerbetrieb lokal:
 
 ```powershell
 uv run vw-euda-mqtt --config config.json
+```
+
+Prüfen, ob der letzte erfolgreiche Dataset-Publish noch frisch genug für
+Container-Monitoring ist:
+
+```powershell
+uv run vw-euda-mqtt --config config.json --healthcheck
 ```
 
 ## Docker-Betrieb
@@ -187,6 +217,11 @@ Logs anzeigen:
 docker logs -f vw-euda-mqtt
 ```
 
+Das veröffentlichte Image enthält einen Docker-`HEALTHCHECK`. Er liest die
+konfigurierte `state_file` und meldet unhealthy, wenn noch kein erfolgreicher
+Dataset-Publish gespeichert wurde oder der letzte erfolgreiche Publish älter
+als vier Polling-Intervalle ist. Die Mindestgrenze liegt bei einer Stunde.
+
 Container neu bauen und starten:
 
 ```bash
@@ -216,21 +251,32 @@ Auswahl der veröffentlichten Topics:
 - `status/error`
 - `status/error_type`
 - `status/last_status_at`
+- `status/last_poll_at`
 - `status/last_success_at`
 - `status/last_error_at`
 - `status/last_dataset`
 - `status/captured_at`
 - `status/car_captured_at`
+- `status/data_age_seconds`
+- `status/stale`
+- `status/service_version`
 - `battery/soc`
 - `battery/target_soc`
+- `battery/charge_bulk_threshold`
 - `battery/charge_power_kw`
 - `odometer/km`
 - `range/km`
 - `charging/state`
 - `charging/mode`
 - `charging/scenario`
+- `charging/action_state`
+- `charging/mode_selection`
+- `charging/max_charge_current_ac`
 - `doors/locked`
 - `parking_brake`
+- `battery/min_temperature_c`
+- `battery/max_temperature_c`
+- `climate/remaining_time_s`
 - `json`
 
 `status/car_captured_at` ist aus den `car_captured_time`-Einträgen des Pakets
@@ -239,6 +285,32 @@ der Bericht fahrzeugseitig bzw. auf dem Weg von ICAS1/OCU zum Backend
 erzeugt/gesendet wurde. Der Dienst nutzt den neuesten dieser Werte als
 Datensatz-Zeitstempel. `status/captured_at` bleibt als kompatibler Alias
 erhalten.
+`status/last_poll_at` und `status/last_success_at` sind Zeitstempel des
+Dienstes. `status/data_age_seconds` wird aus `car_captured_at` berechnet;
+`status/stale` wird `true`, wenn der Datensatz älter als zwei konfigurierte
+Polling-Intervalle ist.
+
+Normalisierte Fahrzeug-Topics:
+
+| MQTT-Topic | Quellfeld | Bedeutung |
+| --- | --- | --- |
+| `battery/soc` | `battery_state_report.soc` | Ladezustand der Batterie in Prozent |
+| `battery/target_soc` | `settings.target_soc` | Eingestelltes Ladeziel in Prozent |
+| `battery/charge_bulk_threshold` | `battery_state_report.charge_bulk_threshold` | Bulk-Ladeschwelle in Prozent |
+| `battery/charge_power_kw` | `battery_state_report.charge_power` | Gemeldete Ladeleistung |
+| `odometer/km` | `mileage.value` | Kilometerstand, geschützt gegen `0` und fallende Werte |
+| `range/km` | `range` | Gemeldete elektrische Reichweite, sofern im Datensatz enthalten |
+| `charging/state` | `charging_state_report.current_charge_state` | Aktueller Ladestatus |
+| `charging/mode` | `charging_state_report.charge_mode` | Lademodus |
+| `charging/scenario` | `charging_state_report.charging_scenario` | Ladeszenario |
+| `charging/action_state` | `charging_state_report.immediate_action_state` | Status einer unmittelbaren Ladeaktion |
+| `charging/mode_selection` | `settings.charge_mode_selection` | Gewählte Ladeeinstellung |
+| `charging/max_charge_current_ac` | `settings.max_charge_current_ac` | Einstellung für maximalen AC-Ladestrom |
+| `doors/locked` | `locked` | Verriegelungsstatus |
+| `parking_brake` | `parking_brake` | Status der Parkbremse |
+| `battery/min_temperature_c` | `min_temperature` | Niedrigste gemeldete Batterietemperatur |
+| `battery/max_temperature_c` | `max_temperature` | Höchste gemeldete Batterietemperatur |
+| `climate/remaining_time_s` | `remaining_climate_time` | Restlaufzeit der Klimatisierung in Sekunden |
 
 Wenn `mqtt.publish_raw` aktiviert ist, veröffentlicht der Dienst jeden
 einzelnen Datenpunkt des ZIP-Pakets zusätzlich verlustfrei:
@@ -265,7 +337,17 @@ Wenn keine VIN konfiguriert ist, nutzt er:
 vw/euda/_service/status/...
 ```
 
+## evcc-Integration
+
+Eine eigene Anleitung zur Einbindung in evcc liegt in [evcc.md](evcc.md).
+Ein Beispiel für eine MQTT-basierte evcc-Fahrzeugkonfiguration liegt unter
+[evcc/mqtt-vehicle.example.yaml](evcc/mqtt-vehicle.example.yaml).
+
 ## Fehlersuche
+
+Bei neuer Einrichtung zuerst `--diagnose` ausführen. Der Modus prüft
+Konfiguration, MQTT-Verbindung, Portal-Login, Fahrzeugauswahl, Continuous-
+Data-Identifier und Dataset-Liste, ohne konfigurierte Zugangsdaten auszugeben.
 
 `Authentication failed: terms-and-conditions`
 
@@ -303,6 +385,9 @@ Kann beim Portal transient auftreten. Der Dienst wiederholt den Poll nach
 
 ## Git- und Sicherheitsnotizen
 
+Siehe [SECURITY.md](SECURITY.md) für Hinweise zu Responsible Disclosure und zur
+Redaktion echter Datenpakete.
+
 Die Nutzung von Konto-E-Mail und Passwort ist eine pragmatische Lösung für den
 aktuellen, browserorientierten Portalfluss. Sie ist ausdrücklich nicht die
 feinste langfristige Lösung. Aus Sicht dieses Projekts wäre ein eigener API-Key
@@ -315,3 +400,5 @@ speichern.
 - `data/` ist ignoriert und enthält nur Laufzeitstatus.
 - Niemals echte Passwörter, VINs mit Personenbezug oder Tokens committen, wenn
   das Repo öffentlich werden soll.
+- Echte Datenpakete für Tests oder Issues müssen wie
+  `tests/fixtures/audi_dataset_redacted.json` redigiert werden.

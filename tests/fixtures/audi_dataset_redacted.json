@@ -1,0 +1,96 @@
+{
+  "vin": "TESTVIN1234567890",
+  "user_id": "redacted-user",
+  "Data": [
+    {
+      "key": "captured_main",
+      "dataFieldName": "car_captured_time",
+      "value": "2026-05-31T15:35:00Z"
+    },
+    {
+      "key": "captured_secondary",
+      "dataFieldName": "car_captured_time",
+      "value": "2026-05-31T15:36:00Z"
+    },
+    {
+      "key": "soc",
+      "dataFieldName": "battery_state_report.soc",
+      "value": "52"
+    },
+    {
+      "key": "target_soc",
+      "dataFieldName": "settings.target_soc",
+      "value": "100"
+    },
+    {
+      "key": "bulk_threshold",
+      "dataFieldName": "battery_state_report.charge_bulk_threshold",
+      "value": "80"
+    },
+    {
+      "key": "charge_power",
+      "dataFieldName": "battery_state_report.charge_power",
+      "value": "0"
+    },
+    {
+      "key": "odometer",
+      "dataFieldName": "mileage.value",
+      "value": "63151"
+    },
+    {
+      "key": "charging_state",
+      "dataFieldName": "charging_state_report.current_charge_state",
+      "value": "not_charging"
+    },
+    {
+      "key": "charge_mode",
+      "dataFieldName": "charging_state_report.charge_mode",
+      "value": "manual"
+    },
+    {
+      "key": "charging_scenario",
+      "dataFieldName": "charging_state_report.charging_scenario",
+      "value": "default"
+    },
+    {
+      "key": "immediate_action",
+      "dataFieldName": "charging_state_report.immediate_action_state",
+      "value": "inactive"
+    },
+    {
+      "key": "mode_selection",
+      "dataFieldName": "settings.charge_mode_selection",
+      "value": "manual"
+    },
+    {
+      "key": "max_current",
+      "dataFieldName": "settings.max_charge_current_ac",
+      "value": "maximum"
+    },
+    {
+      "key": "locked",
+      "dataFieldName": "locked",
+      "value": "true"
+    },
+    {
+      "key": "parking_brake",
+      "dataFieldName": "parking_brake",
+      "value": "true"
+    },
+    {
+      "key": "battery_min_temperature",
+      "dataFieldName": "min_temperature",
+      "value": "17.5"
+    },
+    {
+      "key": "battery_max_temperature",
+      "dataFieldName": "max_temperature",
+      "value": "19.0"
+    },
+    {
+      "key": "remaining_climate_time",
+      "dataFieldName": "remaining_climate_time",
+      "value": "0 s"
+    }
+  ]
+}

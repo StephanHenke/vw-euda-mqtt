@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 import unittest
 from datetime import datetime, timezone
@@ -139,6 +140,31 @@ class DatasetTests(unittest.TestCase):
         self.assertEqual(raw["raw/by_field/timestamp/timestamp_a"], 1)
         self.assertEqual(raw["raw/by_field/timestamp/timestamp_b"], 2)
         self.assertNotIn("raw/timestamp", raw)
+
+    def test_redacted_audi_fixture_exposes_expected_normalized_topics(self) -> None:
+        fixture = Path(__file__).parent / "fixtures" / "audi_dataset_redacted.json"
+        dataset = Dataset.from_json(json.loads(fixture.read_text(encoding="utf-8")))
+
+        values = curated_values(dataset)
+        self.assertEqual(values["battery/soc"], 52)
+        self.assertEqual(values["battery/target_soc"], 100)
+        self.assertEqual(values["battery/charge_power_kw"], 0)
+        self.assertEqual(values["odometer/km"], 63151)
+        self.assertEqual(values["charging/state"], "not_charging")
+        self.assertEqual(values["charging/mode"], "manual")
+        self.assertEqual(values["charging/scenario"], "default")
+        self.assertEqual(values["doors/locked"], True)
+        self.assertEqual(values["parking_brake"], True)
+        self.assertEqual(values["battery/min_temperature_c"], 17.5)
+        self.assertEqual(values["battery/max_temperature_c"], 19.0)
+        self.assertEqual(values["climate/remaining_time_s"], 0.0)
+
+        raw = raw_values(dataset)
+        self.assertEqual(raw["raw/by_key/captured_main"], "2026-05-31T15:35:00Z")
+        self.assertEqual(raw["raw/by_key/captured_secondary"], "2026-05-31T15:36:00Z")
+        self.assertEqual(raw["raw/by_field/car_captured_time/captured_main"], "2026-05-31T15:35:00Z")
+        self.assertEqual(raw["raw/by_field/car_captured_time/captured_secondary"], "2026-05-31T15:36:00Z")
+        self.assertNotIn("raw/car_captured_time", raw)
 
 
 if __name__ == "__main__":
