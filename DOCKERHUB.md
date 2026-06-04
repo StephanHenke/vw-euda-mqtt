@@ -27,6 +27,9 @@ smart home systems, energy management systems, and local automation platforms by
 publishing selected data points as retained MQTT topics. When `publish_raw` is
 enabled, it also publishes every datapoint from the ZIP payload under
 `raw/by_key/...` and `raw/by_field/...` without overwriting repeated field names.
+Home Assistant MQTT autodiscovery can be enabled through
+`mqtt.publish_homeassistant_discovery`; openHAB Generic MQTT Thing examples are
+available in the GitHub repository.
 
 Typical topics include:
 
@@ -92,6 +95,7 @@ Published tags include:
 ```text
 latest
 main
+0.1.3
 0.1.2
 ```
 

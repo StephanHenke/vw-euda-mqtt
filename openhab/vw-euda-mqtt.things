@@ -1,0 +1,23 @@
+Bridge mqtt:broker:local "MQTT Broker" [ host="mqtt.example.local", secure=false ]
+
+Thing mqtt:topic:vw_euda_vehicle "VW EU Data Act Vehicle" (mqtt:broker:local) [
+    availabilityTopic="vw/euda/WAUZZZ00000000000/status/online",
+    payloadAvailable="true",
+    payloadNotAvailable="false"
+] {
+    Channels:
+        Type number   : battery_soc        "Battery SOC"       [ stateTopic="vw/euda/WAUZZZ00000000000/battery/soc" ]
+        Type number   : target_soc         "Target SOC"        [ stateTopic="vw/euda/WAUZZZ00000000000/battery/target_soc" ]
+        Type number   : charge_power       "Charge Power"      [ stateTopic="vw/euda/WAUZZZ00000000000/battery/charge_power_kw" ]
+        Type number   : odometer           "Odometer"          [ stateTopic="vw/euda/WAUZZZ00000000000/odometer/km" ]
+        Type number   : range              "Range"             [ stateTopic="vw/euda/WAUZZZ00000000000/range/km" ]
+        Type string   : charging_state     "Charging State"    [ stateTopic="vw/euda/WAUZZZ00000000000/charging/state" ]
+        Type switch   : connected          "Connected"         [ stateTopic="vw/euda/WAUZZZ00000000000/status/connected", on="true", off="false" ]
+        Type switch   : stale              "Data Stale"        [ stateTopic="vw/euda/WAUZZZ00000000000/status/stale", on="true", off="false" ]
+        Type switch   : doors_locked       "Doors Locked"      [ stateTopic="vw/euda/WAUZZZ00000000000/doors/locked", on="true", off="false" ]
+        Type datetime : car_captured_at    "Car Captured At"   [ stateTopic="vw/euda/WAUZZZ00000000000/status/car_captured_at" ]
+        Type datetime : last_success_at    "Last Success"      [ stateTopic="vw/euda/WAUZZZ00000000000/status/last_success_at" ]
+        Type string   : service_version    "Service Version"   [ stateTopic="vw/euda/WAUZZZ00000000000/status/service_version" ]
+        Type string   : error_type         "Error Type"        [ stateTopic="vw/euda/WAUZZZ00000000000/status/error_type" ]
+        Type string   : error              "Error"             [ stateTopic="vw/euda/WAUZZZ00000000000/status/error" ]
+}

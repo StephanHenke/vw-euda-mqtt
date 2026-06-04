@@ -21,6 +21,8 @@
     "qos": 0,
     "publish_raw": false,
     "publish_carcompat": false,
-    "carcompat_base_topic": "car"
+    "carcompat_base_topic": "car",
+    "publish_homeassistant_discovery": false,
+    "homeassistant_discovery_prefix": "homeassistant"
   }
 }

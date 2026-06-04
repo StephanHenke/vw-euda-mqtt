@@ -1,0 +1,7 @@
+{
+  "mqtt": {
+    "retain": true,
+    "publish_homeassistant_discovery": true,
+    "homeassistant_discovery_prefix": "homeassistant"
+  }
+}

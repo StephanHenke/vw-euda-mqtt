@@ -118,6 +118,10 @@ Important fields:
 - `mqtt.publish_raw`: also publish all raw data fields under `raw/...`.
 - `mqtt.publish_carcompat`: optionally mirror selected values under
   `car/garage/<vin>/...`.
+- `mqtt.publish_homeassistant_discovery`: publish Home Assistant MQTT
+  autodiscovery configs.
+- `mqtt.homeassistant_discovery_prefix`: discovery prefix, default
+  `homeassistant`.
 
 `config.json` contains secrets and is intentionally ignored by Git.
 
@@ -324,6 +328,19 @@ vw/euda/_service/status/...
 A dedicated evcc integration guide is available in [evcc.md](evcc.md).
 An MQTT-based evcc vehicle example is available at
 [evcc/mqtt-vehicle.example.yaml](evcc/mqtt-vehicle.example.yaml).
+
+## Home Assistant
+
+Home Assistant MQTT autodiscovery can be enabled with
+`mqtt.publish_homeassistant_discovery`. A dedicated guide is available in
+[homeassistant.md](homeassistant.md). A minimal config snippet is available at
+[homeassistant/mqtt-autodiscovery.example.json](homeassistant/mqtt-autodiscovery.example.json).
+
+## openHAB
+
+openHAB can consume the retained MQTT topics through the MQTT Binding as a
+Generic MQTT Thing. A dedicated guide is available in [openhab.md](openhab.md).
+Example Things and Items files are available in [openhab/](openhab/).
 
 ## Troubleshooting
 

@@ -28,6 +28,7 @@ from vw_euda_mqtt.service import (  # noqa: E402
     healthcheck,
     publish_carcompat,
     publish_dataset,
+    publish_homeassistant_discovery,
     publish_status,
     run_service,
 )
@@ -51,6 +52,8 @@ class ConfigAndStateTests(unittest.TestCase):
                             "publish_raw": True,
                             "publish_carcompat": True,
                             "carcompat_base_topic": "/garage/",
+                            "publish_homeassistant_discovery": True,
+                            "homeassistant_discovery_prefix": "/ha/",
                         },
                     }
                 ),
@@ -67,6 +70,8 @@ class ConfigAndStateTests(unittest.TestCase):
         self.assertTrue(config.mqtt.publish_raw)
         self.assertTrue(config.mqtt.publish_carcompat)
         self.assertEqual(config.mqtt.carcompat_base_topic, "garage")
+        self.assertTrue(config.mqtt.publish_homeassistant_discovery)
+        self.assertEqual(config.mqtt.homeassistant_discovery_prefix, "ha")
 
     def test_service_config_from_file_accepts_environment_overrides(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -333,6 +338,62 @@ class PublishTests(unittest.TestCase):
                 ("car/garage/TESTVIN1234567890/drives/primary/level", 80),
                 ("car/garage/TESTVIN1234567890/odometer", 12345),
             ],
+        )
+
+    def test_publish_homeassistant_discovery_emits_sensor_and_binary_sensor_configs(self) -> None:
+        publisher = _StandaloneRecorder()
+        mqtt_config = MqttConfig(
+            host="mqtt.example.local",
+            base_topic="vw/euda",
+            homeassistant_discovery_prefix="ha",
+        )
+
+        publish_homeassistant_discovery(publisher, mqtt_config, "TESTVIN1234567890")
+
+        published = dict(publisher.published)
+        soc = published["ha/sensor/vw_euda_testvin1234567890/battery_soc/config"]
+        self.assertEqual(soc["name"], "Battery SOC")
+        self.assertEqual(soc["unique_id"], "vw_euda_testvin1234567890_battery_soc")
+        self.assertEqual(soc["state_topic"], "vw/euda/TESTVIN1234567890/battery/soc")
+        self.assertEqual(soc["device_class"], "battery")
+        self.assertEqual(soc["unit_of_measurement"], "%")
+        self.assertEqual(soc["state_class"], "measurement")
+        self.assertEqual(soc["availability"][0]["topic"], "vw/euda/TESTVIN1234567890/status/online")
+        self.assertEqual(soc["availability"][0]["payload_available"], "true")
+        self.assertEqual(soc["device"]["identifiers"], ["vw_euda_TESTVIN1234567890"])
+        self.assertEqual(soc["device"]["sw_version"], __version__)
+
+        doors = published["ha/binary_sensor/vw_euda_testvin1234567890/doors_locked/config"]
+        self.assertEqual(doors["state_topic"], "vw/euda/TESTVIN1234567890/doors/locked")
+        self.assertEqual(doors["payload_on"], "true")
+        self.assertEqual(doors["payload_off"], "false")
+        self.assertEqual(doors["device_class"], "lock")
+
+    def test_publish_dataset_can_include_homeassistant_discovery(self) -> None:
+        fake_class = _recording_publisher_class()
+        config = ServiceConfig(
+            email="user@example.com",
+            password="example-password",
+            mqtt=MqttConfig(
+                host="mqtt.example.local",
+                base_topic="vw/euda",
+                publish_homeassistant_discovery=True,
+            ),
+        )
+        raw_payload = {
+            "Data": [
+                {"key": "soc", "dataFieldName": "battery_state_report.soc", "value": "80"},
+            ]
+        }
+        dataset = Dataset.from_json(raw_payload)
+
+        with patch("vw_euda_mqtt.service.MqttPublisher", fake_class):
+            publish_dataset(config, "TESTVIN1234567890", "dataset.zip", dataset, raw_payload)
+
+        published = dict(fake_class.instances[-1].published)
+        self.assertEqual(
+            published["homeassistant/sensor/vw_euda_testvin1234567890/battery_soc/config"]["state_topic"],
+            "vw/euda/TESTVIN1234567890/battery/soc",
         )
 
 

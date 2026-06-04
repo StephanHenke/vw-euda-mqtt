@@ -7,6 +7,17 @@ semantic versioning.
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-06-04
+
+### Added
+
+- Add Home Assistant MQTT autodiscovery publishing with configurable discovery
+  prefix.
+- Add German/English Home Assistant MQTT autodiscovery documentation and a
+  minimal config example.
+- Add German/English openHAB integration documentation plus example Things and
+  Items files.
+
 ## [0.1.2] - 2026-06-04
 
 ### Added
