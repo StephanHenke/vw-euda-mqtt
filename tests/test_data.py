@@ -109,7 +109,36 @@ class DatasetTests(unittest.TestCase):
                 "doors/locked": True,
             },
         )
-        self.assertEqual(raw_values(dataset)["raw/bad_field_name"], "text")
+        raw = raw_values(dataset)
+        self.assertEqual(raw["raw/bad_field_name"], "text")
+        self.assertEqual(raw["raw/by_key/odd"], "text")
+        self.assertEqual(raw["raw/by_field/bad_field_name/odd"], "text")
+        self.assertEqual(
+            raw["raw/_topic_index"]["odd"],
+            {
+                "field_name": "bad field/name",
+                "by_key_topic": "raw/by_key/odd",
+                "by_field_topic": "raw/by_field/bad_field_name/odd",
+            },
+        )
+
+    def test_raw_values_keep_duplicate_field_names_without_overwriting(self) -> None:
+        dataset = Dataset.from_json(
+            {
+                "Data": [
+                    {"key": "timestamp_a", "dataFieldName": "timestamp", "value": "1"},
+                    {"key": "timestamp_b", "dataFieldName": "timestamp", "value": "2"},
+                ]
+            }
+        )
+
+        raw = raw_values(dataset)
+
+        self.assertEqual(raw["raw/by_key/timestamp_a"], 1)
+        self.assertEqual(raw["raw/by_key/timestamp_b"], 2)
+        self.assertEqual(raw["raw/by_field/timestamp/timestamp_a"], 1)
+        self.assertEqual(raw["raw/by_field/timestamp/timestamp_b"], 2)
+        self.assertNotIn("raw/timestamp", raw)
 
 
 if __name__ == "__main__":

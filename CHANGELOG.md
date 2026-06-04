@@ -5,6 +5,17 @@ All notable changes to this project are documented in this file.
 The format follows the spirit of Keep a Changelog, and this project uses
 semantic versioning.
 
+## [0.1.1] - 2026-06-04
+
+### Changed
+
+- Publish raw datapoints losslessly under `raw/by_key/...` and
+  `raw/by_field/...` when `mqtt.publish_raw` is enabled, so repeated field names
+  in real VW/Audi datasets no longer overwrite each other.
+- Document the full raw MQTT topic layout and topic index.
+- Publish `status/car_captured_at` as an explicit alias for the latest
+  `car_captured_time` value from the vehicle dataset.
+
 ## [0.1.0] - 2026-06-01
 
 ### Added

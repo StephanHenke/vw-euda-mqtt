@@ -38,12 +38,13 @@ aktiven Datenanfrage, listet erzeugte ZIP-Datasets, überspringt leere
 Platzhalter-ZIPs, lädt echte ZIP-Inhalte herunter und veröffentlicht deren Werte
 nach MQTT.
 
-In den bisherigen Audi/VW-Portaltests wurden jedoch nur
-`*_no_content_found.zip`-Platzhalterdateien erzeugt. Aktuell ist in diesem
-Projekt noch kein verlässlicher Weg bekannt, mit dem Fahrzeugdaten nach dem
-Anlegen der Datenanfrage sauber im Portal erscheinen. Der Dienst kann deshalb
-technisch verbunden und fehlerfrei laufen, ohne dass bereits Fahrzeugwerte zum
-Veröffentlichen vorhanden sind.
+In den Audi/VW-Portaltests zeigte sich zunächst nur die Erzeugung von
+`*_no_content_found.zip`-Platzhalterdateien. Inzwischen wurden echte
+Fahrzeugdatensätze beobachtet und erfolgreich nach MQTT publiziert. Der
+Datadelivery-List-Endpunkt kann jedoch weiterhin intermittierend `HTTP 500`
+liefern. Der Dienst behält deshalb die zuletzt erfolgreich publizierten Werte
+retained im MQTT-Broker und meldet während solcher Polling-Fehler zusätzlich
+einen `PendingData`-Status.
 
 ## Voraussetzungen im Portal
 
@@ -219,6 +220,7 @@ Auswahl der veröffentlichten Topics:
 - `status/last_error_at`
 - `status/last_dataset`
 - `status/captured_at`
+- `status/car_captured_at`
 - `battery/soc`
 - `battery/target_soc`
 - `battery/charge_power_kw`
@@ -230,6 +232,26 @@ Auswahl der veröffentlichten Topics:
 - `doors/locked`
 - `parking_brake`
 - `json`
+
+`status/car_captured_at` ist aus den `car_captured_time`-Einträgen des Pakets
+abgeleitet. Laut VW/Audi-Datenbeschreibung ist dies ein UTC-Zeitpunkt, an dem
+der Bericht fahrzeugseitig bzw. auf dem Weg von ICAS1/OCU zum Backend
+erzeugt/gesendet wurde. Der Dienst nutzt den neuesten dieser Werte als
+Datensatz-Zeitstempel. `status/captured_at` bleibt als kompatibler Alias
+erhalten.
+
+Wenn `mqtt.publish_raw` aktiviert ist, veröffentlicht der Dienst jeden
+einzelnen Datenpunkt des ZIP-Pakets zusätzlich verlustfrei:
+
+- `raw/by_key/<key>`: Wert des Datenpunkts unter dem eindeutigen Paket-Key.
+- `raw/by_field/<dataFieldName>/<key>`: derselbe Wert gruppiert nach
+  `dataFieldName`. Der Key bleibt Teil des Topics, weil reale Pakete mehrfach
+  gleiche Feldnamen wie `timestamp`, `state`, `message_id` oder
+  `car_captured_time` enthalten können.
+- `raw/<dataFieldName>`: kurzer Kompatibilitätspfad für Felder, die im Paket
+  nur einmal vorkommen.
+- `raw/_topic_index`: JSON-Index mit Zuordnung von Paket-Key zu Feldname und
+  den daraus erzeugten MQTT-Topics.
 
 Bei Login- oder Polling-Fehlern schreibt der Dienst retained Fehlerstatus nach:
 
@@ -263,11 +285,10 @@ Datenanfrage aktiv.
 
 `No content datasets available yet`
 
-Login, Marke und Identifier funktionieren. Das Portal erzeugt aber aktuell nur
-`*_no_content_found.zip`. Warten, bis eine ZIP-Datei mit echtem Inhalt vorhanden
-ist. In den bisherigen Tests wurde noch kein verlässlicher Weg gefunden, wie
-Audi/VW-Fahrzeugdaten sauber im EU Data Act Portal ankommen; sobald das Portal
-ein nicht-leeres Dataset bereitstellt, verarbeitet der Dienst es automatisch.
+Login, Marke und Identifier funktionieren. Das Portal hat für diesen Poll noch
+keine ZIP-Datei mit Inhalt geliefert. Warten, bis eine ZIP-Datei mit echtem
+Inhalt vorhanden ist; sobald das Portal ein nicht-leeres Dataset bereitstellt,
+verarbeitet der Dienst es automatisch.
 
 `HTTP 401`
 

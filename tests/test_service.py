@@ -137,6 +137,7 @@ class PublishTests(unittest.TestCase):
         self.assertEqual(published["vw/euda/TESTVIN1234567890/status/online"], True)
         self.assertEqual(published["vw/euda/TESTVIN1234567890/status/last_dataset"], "dataset.zip")
         self.assertEqual(published["vw/euda/TESTVIN1234567890/status/captured_at"], "2026-01-02T03:04:05+00:00")
+        self.assertEqual(published["vw/euda/TESTVIN1234567890/status/car_captured_at"], "2026-01-02T03:04:05+00:00")
         self.assertEqual(published["vw/euda/TESTVIN1234567890/battery/soc"], 80)
         self.assertEqual(published["vw/euda/TESTVIN1234567890/range/km"], 321)
         self.assertEqual(published["vw/euda/TESTVIN1234567890/raw/range"], 321)

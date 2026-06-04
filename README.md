@@ -37,12 +37,12 @@ exposes through the EU Data Act portal: it logs in, reads the active data
 request metadata, lists generated ZIP datasets, skips empty placeholder ZIPs,
 downloads real ZIP payloads, and publishes their contents to MQTT.
 
-In practice, current Audi/VW portal tests have only produced
-`*_no_content_found.zip` placeholder files so far. At the moment, no reliable
-procedure is known in this project that makes vehicle data appear cleanly in the
-portal after the data request has been created. This means the bridge can be
-technically connected and healthy while still having no vehicle values to
-publish.
+In practice, Audi/VW portal tests initially only produced
+`*_no_content_found.zip` placeholder files. Real vehicle datasets have since
+been observed and successfully published to MQTT. The datadelivery list endpoint
+can still intermittently return `HTTP 500`, so the bridge can retain the last
+successfully published values in MQTT while also reporting transient
+`PendingData` status during later polls.
 
 ## Portal Setup
 
@@ -204,6 +204,7 @@ Selected topics:
 - `status/last_error_at`
 - `status/last_dataset`
 - `status/captured_at`
+- `status/car_captured_at`
 - `battery/soc`
 - `battery/target_soc`
 - `battery/charge_power_kw`
@@ -215,6 +216,25 @@ Selected topics:
 - `doors/locked`
 - `parking_brake`
 - `json`
+
+`status/car_captured_at` is derived from the payload's `car_captured_time`
+entries. According to the VW/Audi data dictionary, this is a UTC timestamp for
+when the report was created or sent on the vehicle-side path from ICAS1/OCU to
+the backend. The service uses the latest such value as the dataset timestamp.
+`status/captured_at` remains as a compatibility alias.
+
+When `mqtt.publish_raw` is enabled, the service also publishes every datapoint
+from the ZIP payload without overwriting duplicate field names:
+
+- `raw/by_key/<key>`: datapoint value under the package's unique key.
+- `raw/by_field/<dataFieldName>/<key>`: the same value grouped by
+  `dataFieldName`. The key remains part of the topic because real payloads can
+  contain repeated field names such as `timestamp`, `state`, `message_id`, or
+  `car_captured_time`.
+- `raw/<dataFieldName>`: short compatibility topic for fields that occur only
+  once in the payload.
+- `raw/_topic_index`: JSON index mapping each package key to its field name and
+  generated MQTT topics.
 
 If login or polling fails, the service publishes retained error state under:
 
@@ -247,11 +267,10 @@ Data Act portal.
 
 `No content datasets available yet`
 
-Login, brand selection, and identifier lookup work. The portal currently only
-generates `*_no_content_found.zip` files. Wait until a ZIP with real content is
-available. Current testing has not yet identified a reliable way to make Audi/VW
-vehicle data arrive in the EU Data Act portal; the service will process it
-automatically once the portal provides a non-empty dataset.
+Login, brand selection, and identifier lookup work. The portal did not provide a
+ZIP with real content for this poll. Wait until a ZIP with real content is
+available; the service will process it automatically once the portal provides a
+non-empty dataset.
 
 `HTTP 401`
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
@@ -49,6 +50,21 @@ def parse_timestamp(raw: str | None) -> datetime | None:
 def topic_safe(value: str) -> str:
     cleaned = TOPIC_SAFE_RE.sub("_", value.strip())
     return cleaned.strip("_") or "unknown"
+
+
+def _unique_topic_segments(values: list[str]) -> dict[str, str]:
+    segments: dict[str, str] = {}
+    used: set[str] = set()
+    for value in sorted(set(values)):
+        base = topic_safe(value)
+        candidate = base
+        index = 2
+        while candidate in used:
+            candidate = f"{base}_{index}"
+            index += 1
+        used.add(candidate)
+        segments[value] = candidate
+    return segments
 
 
 @dataclass
@@ -132,6 +148,29 @@ def curated_values(dataset: Dataset) -> dict[str, Any]:
 
 def raw_values(dataset: Dataset) -> dict[str, Any]:
     values: dict[str, Any] = {}
-    for point in dataset.points.values():
-        values[f"raw/{topic_safe(point.field_name)}"] = point.value
+    points = list(dataset.points.values())
+    field_counts = Counter(point.field_name for point in points)
+    field_topics = _unique_topic_segments([point.field_name for point in points])
+    key_topics = _unique_topic_segments([point.key for point in points])
+    topic_index: dict[str, dict[str, str]] = {}
+
+    for point in points:
+        field_topic = field_topics[point.field_name]
+        key_topic = key_topics[point.key]
+        value = point.value
+        by_key_topic = f"raw/by_key/{key_topic}"
+        by_field_topic = f"raw/by_field/{field_topic}/{key_topic}"
+
+        values[by_key_topic] = value
+        values[by_field_topic] = value
+        topic_index[point.key] = {
+            "field_name": point.field_name,
+            "by_key_topic": by_key_topic,
+            "by_field_topic": by_field_topic,
+        }
+
+        if field_counts[point.field_name] == 1:
+            values[f"raw/{field_topic}"] = value
+
+    values["raw/_topic_index"] = topic_index
     return values

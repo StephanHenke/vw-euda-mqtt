@@ -306,6 +306,7 @@ def publish_dataset(
         "status/error_type": "",
         "status/last_dataset": dataset_name,
         "status/captured_at": dataset.captured_at.isoformat() if dataset.captured_at else "",
+        "status/car_captured_at": dataset.captured_at.isoformat() if dataset.captured_at else "",
         "status/last_success_at": datetime.now(timezone.utc).isoformat(),
         "json": raw_payload,
     }

@@ -24,7 +24,9 @@ docker pull ghcr.io/stephanhenke/vw-euda-mqtt:latest
 
 The service is intended to make VW/Audi EU Data Act vehicle data available to
 smart home systems, energy management systems, and local automation platforms by
-publishing selected data points as retained MQTT topics.
+publishing selected data points as retained MQTT topics. When `publish_raw` is
+enabled, it also publishes every datapoint from the ZIP payload under
+`raw/by_key/...` and `raw/by_field/...` without overwriting repeated field names.
 
 Typical topics include:
 
@@ -33,7 +35,9 @@ vw/euda/<vin>/battery/soc
 vw/euda/<vin>/range/km
 vw/euda/<vin>/charging/state
 vw/euda/<vin>/odometer/km
+vw/euda/<vin>/status/car_captured_at
 vw/euda/<vin>/status/connected
+vw/euda/<vin>/raw/by_field/<dataFieldName>/<key>
 ```
 
 ## Quick Start
@@ -56,13 +60,13 @@ https://github.com/StephanHenke/vw-euda-mqtt
 ## Current Limitation
 
 The bridge is built against the data transfer that Volkswagen Group exposes
-through the EU Data Act portal. Current Audi/VW portal tests have so far only
-produced `*_no_content_found.zip` placeholder files. At the moment, no reliable
-procedure is known in this project that makes vehicle data appear cleanly in the
-portal after the data request has been created.
+through the EU Data Act portal. Current Audi/VW portal tests have shown that
+real datasets can appear, but the datadelivery list endpoint can still
+intermittently return backend errors.
 
-This means the container can be technically connected and healthy while still
-having no vehicle values to publish.
+This means the container can publish retained vehicle data from the last
+successful dataset while also reporting transient `PendingData` status during
+later polls.
 
 ## Tags and Architectures
 
