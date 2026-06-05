@@ -5,7 +5,44 @@ All notable changes to this project are documented in this file.
 The format follows the spirit of Keep a Changelog, and this project uses
 semantic versioning.
 
-## [Unreleased]
+## [0.3.0] - 2026-06-05
+
+### Added
+
+- Publish datapoint-specific capture metadata under
+  `<normalized-topic>/car_captured_at` when the matching `car_captured_time` is
+  known.
+- Add a canonical `structured/by_name/<name>/...` and
+  `structured/by_key/<key>/...` MQTT tree for cataloged datapoints.
+- Publish ZIP members under `raw/file/<index>/filename` and
+  `raw/file/<index>/content`.
+- Add optional `mqtt.publish_history` backfill publishing under
+  `history/batch/json` for systems that can persist values with their original
+  `car_captured_at`.
+- Add openHAB history backfill examples using JavaScript Scripting and
+  TimescaleDB point injection with original `car_captured_at` timestamps.
+- Add optional `save_original_data` / `original_data_dir` local archiving for
+  unchanged portal ZIP downloads.
+
+### Changed
+
+- Prefer the newest `car_captured_time` group when a normalized source field
+  appears more than once in one dataset.
+- Disable MQTT retain by default; `mqtt.retain=true` is now an explicit opt-in.
+- Keep heavy helper payloads such as `.../json` and raw file contents live-only
+  even when `mqtt.retain=true`.
+- Retain Home Assistant discovery config topics independently through
+  `mqtt.homeassistant_discovery_retain`, defaulting to `true` when discovery is
+  enabled.
+- Stop publishing delete/tombstone messages for previous raw MQTT layouts.
+
+### Fixed
+
+- Treat `car_captured_time` as the terminal timestamp of the preceding datapoint
+  group instead of flattening it only into a global dataset timestamp.
+- Reuse a matching VIN/identifier pair from the local state file when
+  `config.identifier` is empty, avoiding unnecessary metadata lookups on later
+  polls.
 
 ## [0.2.0] - 2026-06-05
 

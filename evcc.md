@@ -10,13 +10,14 @@ evcc-Fahrzeug zu ersetzen, ohne die bisherigen Ladevorgänge zu verlieren.
 
 ### Grundprinzip
 
-`vwgroup-vehicle2mqtt` veröffentlicht Fahrzeugwerte retained unter:
+`vwgroup-vehicle2mqtt` veröffentlicht Fahrzeugwerte unter:
 
 ```text
 vw/euda/<VIN>/
 ```
 
-Für evcc sind aktuell besonders relevant:
+Für evcc sollte `mqtt.retain=true` gesetzt werden, damit evcc nach einem
+Neustart sofort den letzten Wert erhält. Aktuell besonders relevant:
 
 - `battery/soc`
 - `battery/target_soc`
@@ -123,8 +124,9 @@ lokalen `state_file`. Wenn ein neuer Portalwert `0`, nicht numerisch oder
 kleiner als der zuletzt bekannte Kilometerstand ist, wird für das normalisierte
 Topic weiter der letzte gültige Wert veröffentlicht.
 
-Die Rohdaten unter `raw/...` bleiben unverändert und zeigen weiterhin, was im
-VW/Audi-Datensatz stand.
+Die aufbereiteten Daten unter `structured/...` und die Datei-Inhalte unter
+`raw/file/<index>/...` bleiben unverändert und zeigen weiterhin, was im VW/Audi-
+Datensatz stand.
 
 ## English
 
@@ -134,13 +136,14 @@ source without losing previous charging sessions.
 
 ### Basic Idea
 
-`vwgroup-vehicle2mqtt` publishes retained vehicle values under:
+`vwgroup-vehicle2mqtt` publishes vehicle values under:
 
 ```text
 vw/euda/<VIN>/
 ```
 
-The most useful evcc topics are:
+Set `mqtt.retain=true` so evcc receives the last value immediately after a
+restart. The most useful evcc topics are:
 
 - `battery/soc`
 - `battery/target_soc`
@@ -246,5 +249,5 @@ Adjust `capacity` to the vehicle's usable battery capacity.
 last known odometer, the normalized MQTT topic keeps publishing the last valid
 value.
 
-Raw topics under `raw/...` remain unchanged and still expose the original
-VW/Audi datapoint.
+Structured topics under `structured/...` and file contents under `raw/file/<index>/...`
+remain unchanged and still expose the original VW/Audi dataset.

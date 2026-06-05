@@ -18,6 +18,8 @@ Beispiele liegen unter:
 ```text
 openhab/vwgroup-vehicle2mqtt.things
 openhab/vwgroup-vehicle2mqtt.items
+openhab/vwgroup-vehicle2mqtt-history.items
+openhab/vwgroup-vehicle2mqtt-history.js
 ```
 
 ## Vorbereitung
@@ -60,6 +62,7 @@ Enthaltene Channels:
 - Service Version
 - Error Type
 - Error
+- History Batch JSON
 
 ## Items-Beispiel
 
@@ -75,6 +78,18 @@ Number Audi_Battery_SOC "Battery SOC [%.0f %%]" {
 }
 ```
 
+## Historischer Backfill
+
+Wenn `mqtt.publish_history=true` aktiv ist, sendet der Dienst zusätzlich
+`vw/euda/<VIN>/history/batch/json`. Dieses Topic enthält mehrere Werte eines
+Datenpunkts mit ihrem jeweiligen `car_captured_at`.
+
+Die Datei `openhab/vwgroup-vehicle2mqtt-history.js` zeigt, wie openHAB diese
+Werte mit `item.persistence.persist(timestamp, state, 'timescaledb')` in
+TimescaleDB injiziert. Passe in der Rule `PERSISTENCE_SERVICE` und
+`ITEM_BY_CURATED_TOPIC` an deine Umgebung an. Die ausführliche Beschreibung steht
+in [history.md](history.md).
+
 ## Hinweise
 
 - `status/error` kann längere Texte enthalten und ist als `String` eingebunden.
@@ -83,6 +98,13 @@ Number Audi_Battery_SOC "Battery SOC [%.0f %%]" {
 - `status/car_captured_at` ist der Fahrzeug-/Backend-Zeitpunkt aus dem Dataset.
   `status/last_success_at` ist der Zeitpunkt, an dem der Dienst erfolgreich
   publiziert hat.
+- MQTT selbst kann Persistence-Zeitstempel nicht rückdatieren. Für historische
+  Werte mit Originalzeitpunkt den History-Batch und die openHAB-History-Rule
+  verwenden.
+- Empfohlen ist: Live-Items zeigen den letzten Wert an, laufen aber nicht
+  zusätzlich automatisch per `everyChange` oder `everyUpdate` in dieselbe
+  Persistence. Die historischen Punkte werden kontrolliert durch die Rule
+  injiziert.
 
 ## English
 
@@ -95,6 +117,8 @@ Example files:
 ```text
 openhab/vwgroup-vehicle2mqtt.things
 openhab/vwgroup-vehicle2mqtt.items
+openhab/vwgroup-vehicle2mqtt-history.items
+openhab/vwgroup-vehicle2mqtt-history.js
 ```
 
 Setup:
@@ -108,6 +132,14 @@ Setup:
 The Generic MQTT Thing uses `vw/euda/<VIN>/status/online` as availability topic
 with `true` and `false` payloads.
 
+For historical backfill, enable `mqtt.publish_history=true` and use the
+`vwgroup-vehicle2mqtt-history.js` example. It injects batch events into
+TimescaleDB with `item.persistence.persist(timestamp, state, 'timescaledb')` and
+their original `car_captured_at` timestamp. Keep live Items for the latest state,
+but avoid automatic `everyChange` or `everyUpdate` persistence for the same
+service. See [history.md](history.md) for details.
+
 Official reference:
 
 - https://www.openhab.org/addons/bindings/mqtt.generic/
+- https://www.openhab.org/docs/configuration/persistence

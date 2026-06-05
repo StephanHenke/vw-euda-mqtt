@@ -1,0 +1,3 @@
+String Audi_History_Batch_JSON "History Batch JSON [%s]" (gVwEuda) {
+  channel="mqtt:topic:local:vw_euda_vehicle:history_batch_json"
+}

@@ -17,8 +17,8 @@ vehicle data forwarded to MQTT.
 
 The service logs in to `eu-data-act.drivesomethinggreater.com`, follows the
 portal's brand-specific login redirect, downloads the latest continuous-data ZIP
-for a VIN, extracts useful data points, and publishes them as retained MQTT
-topics.
+for a VIN, extracts useful data points, and publishes them to MQTT. MQTT retain
+is disabled by default and must be enabled explicitly with `mqtt.retain=true`.
 
 The login and dataset approach is based on
 <https://github.com/mikrohard/hass-vw-eu-data-act> (MIT).
@@ -49,8 +49,9 @@ In practice, Audi/VW portal tests initially only produced
 `*_no_content_found.zip` placeholder files. Real vehicle datasets have since
 been observed and successfully published to MQTT. The datadelivery list endpoint
 can still intermittently return `HTTP 500`, so the bridge can retain the last
-successfully published values in MQTT while also reporting transient
-`PendingData` status during later polls.
+successfully published values in MQTT only when `mqtt.retain=true`; otherwise it
+publishes live values and reports transient `PendingData` status during later
+polls.
 
 ## Portal Setup
 
@@ -116,18 +117,31 @@ Important fields:
 - `identifier`: can stay empty. The service reads the continuous-data
   identifier from portal metadata.
 - `poll_interval_seconds`: default `900`, matching 15-minute datasets.
+- `save_original_data`: default `false`. When set to `true`, every downloaded
+  original portal ZIP is saved locally before MQTT publishing.
+- `original_data_dir`: default `data/original`. Relative paths are resolved next
+  to `config.json`; in Docker this ends up below the mounted `/config/data`
+  folder.
 - `mqtt.host`, `mqtt.port`, `mqtt.username`, `mqtt.password`: MQTT broker
   settings.
 - `mqtt.base_topic`: default `vw/euda`. This topic intentionally stays stable
   for compatibility, even though the service is now named
   `vwgroup-vehicle2mqtt`.
-- `mqtt.publish_raw`: also publish all raw data fields under `raw/...`.
+- `mqtt.retain`: default `false`. Set to `true` only when MQTT clients should
+  receive the latest small state topics after reconnecting.
+- `mqtt.publish_raw`: also publish structured datapoints under `structured/...`
+  and ZIP file contents under `raw/file/<index>/...`.
+- `mqtt.publish_history`: default `false`. Publishes a live-only backfill batch
+  under `history/batch/json` so systems such as openHAB can persist values with
+  their original `car_captured_at`.
 - `mqtt.publish_carcompat`: optionally mirror selected values under
   `car/garage/<vin>/...`.
 - `mqtt.publish_homeassistant_discovery`: publish Home Assistant MQTT
   autodiscovery configs.
 - `mqtt.homeassistant_discovery_prefix`: discovery prefix, default
   `homeassistant`.
+- `mqtt.homeassistant_discovery_retain`: default `true`. Retains Home Assistant
+  discovery config topics independently from vehicle state retention.
 
 `config.json` contains secrets and is intentionally ignored by Git.
 
@@ -271,12 +285,17 @@ Selected topics:
 - `battery/min_temperature_c`
 - `battery/max_temperature_c`
 - `climate/remaining_time_s`
-- `json`
+- `<normalized-topic>/car_captured_at`
 
 `status/car_captured_at` is derived from the payload's `car_captured_time`
 entries. According to the VW/Audi data dictionary, this is a UTC timestamp for
 when the report was created or sent on the vehicle-side path from ICAS1/OCU to
-the backend. The service uses the latest such value as the dataset timestamp.
+the backend. Real payloads contain multiple `car_captured_time` entries; each
+one closes the preceding datapoint group. The service therefore publishes the
+latest such value as the dataset timestamp and also exposes datapoint-specific
+capture metadata under `<normalized-topic>/car_captured_at`. If a payload ends
+with datapoints after the last `car_captured_time`, those trailing datapoints
+are assigned to the last known capture timestamp.
 `status/captured_at` remains as a compatibility alias.
 `status/last_poll_at` and `status/last_success_at` are service-side timestamps.
 `status/data_age_seconds` is calculated from `car_captured_at`; `status/stale`
@@ -304,20 +323,37 @@ Normalized vehicle topics:
 | `battery/max_temperature_c` | `max_temperature` | Maximum reported battery temperature |
 | `climate/remaining_time_s` | `remaining_climate_time` | Remaining climate runtime in seconds |
 
-When `mqtt.publish_raw` is enabled, the service also publishes every datapoint
-from the ZIP payload without overwriting duplicate field names:
+The EU Data Act delivery endpoint returns ZIP files. If `mqtt.publish_raw` is
+enabled, the service keeps two MQTT views separate:
 
-- `raw/by_key/<key>`: datapoint value under the package's unique key.
-- `raw/by_field/<dataFieldName>/<key>`: the same value grouped by
-  `dataFieldName`. The key remains part of the topic because real payloads can
-  contain repeated field names such as `timestamp`, `state`, `message_id`, or
-  `car_captured_time`.
-- `raw/<dataFieldName>`: short compatibility topic for fields that occur only
-  once in the payload.
-- `raw/_topic_index`: JSON index mapping each package key to its field name and
-  generated MQTT topics.
+- `structured/by_name/<datapoint_name>/...`: catalog-based datapoint view. The
+  direct leaves always point to the newest value for that name.
+- `structured/by_name/<datapoint_name>/keys`: JSON list of matching technical
+  keys, newest first, each with `key` and `car_captured_at`.
+- `structured/by_key/<datapoint_key>/...`: technical-key view of the same
+  datapoint, using the raw ZIP `key` value.
+- `raw/file/<index>/filename`: original ZIP member filename.
+- `raw/file/<index>/content`: original ZIP member content.
 
-If login or polling fails, the service publishes retained error state under:
+Example:
+
+```text
+vw/euda/<vin>/structured/by_name/soc/key
+vw/euda/<vin>/structured/by_name/soc/value
+vw/euda/<vin>/structured/by_name/soc/car_captured_at
+vw/euda/<vin>/structured/by_key/<datapoint_key>/name
+vw/euda/<vin>/raw/file/0/filename
+vw/euda/<vin>/raw/file/0/content
+```
+
+MQTT retain for vehicle, status, structured, and raw values is opt-in. By
+default those topics are not retained. When `mqtt.retain=true`, small state and
+structured leaves may be retained, but `.../json` and raw file `content` are
+always live-only. Home Assistant discovery config topics use the separate
+`mqtt.homeassistant_discovery_retain` setting.
+The service does not publish delete/tombstone messages for old broker layouts.
+
+If login or polling fails, the service publishes error state under:
 
 ```text
 vw/euda/<vin>/status/...
@@ -341,12 +377,17 @@ Home Assistant MQTT autodiscovery can be enabled with
 `mqtt.publish_homeassistant_discovery`. A dedicated guide is available in
 [homeassistant.md](homeassistant.md). A minimal config snippet is available at
 [homeassistant/mqtt-autodiscovery.example.json](homeassistant/mqtt-autodiscovery.example.json).
+MQTT state updates cannot backdate Recorder history; see [history.md](history.md)
+for the history backfill approach.
 
 ## openHAB
 
-openHAB can consume the retained MQTT topics through the MQTT Binding as a
-Generic MQTT Thing. A dedicated guide is available in [openhab.md](openhab.md).
-Example Things and Items files are available in [openhab/](openhab/).
+openHAB can consume the MQTT topics through the MQTT Binding as a Generic MQTT
+Thing. Enable `mqtt.retain=true` if openHAB should receive the last state after
+reconnect. A dedicated guide is available in [openhab.md](openhab.md).
+Example Things, Items, and history backfill files are available in
+[openhab/](openhab/). The original-`car_captured_at` backfill path is described
+in [history.md](history.md).
 
 ## Troubleshooting
 

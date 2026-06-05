@@ -10,6 +10,8 @@
   "retry_interval_seconds": 60,
   "publish_unchanged": false,
   "state_file": "data/state.json",
+  "save_original_data": false,
+  "original_data_dir": "data/original",
   "mqtt": {
     "host": "mqtt.example.local",
     "port": 1883,
@@ -17,12 +19,14 @@
     "password": "",
     "client_id": "vwgroup-vehicle2mqtt",
     "base_topic": "vw/euda",
-    "retain": true,
+    "retain": false,
     "qos": 0,
     "publish_raw": false,
+    "publish_history": false,
     "publish_carcompat": false,
     "carcompat_base_topic": "car",
     "publish_homeassistant_discovery": false,
-    "homeassistant_discovery_prefix": "homeassistant"
+    "homeassistant_discovery_prefix": "homeassistant",
+    "homeassistant_discovery_retain": true
   }
 }

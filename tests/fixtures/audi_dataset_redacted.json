@@ -3,17 +3,7 @@
   "user_id": "redacted-user",
   "Data": [
     {
-      "key": "captured_main",
-      "dataFieldName": "car_captured_time",
-      "value": "2026-05-31T15:35:00Z"
-    },
-    {
-      "key": "captured_secondary",
-      "dataFieldName": "car_captured_time",
-      "value": "2026-05-31T15:36:00Z"
-    },
-    {
-      "key": "soc",
+      "key": "506cb83e-f99f-3af3-bbeb-0429b69a78d9",
       "dataFieldName": "battery_state_report.soc",
       "value": "52"
     },
@@ -31,6 +21,11 @@
       "key": "charge_power",
       "dataFieldName": "battery_state_report.charge_power",
       "value": "0"
+    },
+    {
+      "key": "captured_main",
+      "dataFieldName": "car_captured_time",
+      "value": "2026-05-31T15:35:00Z"
     },
     {
       "key": "odometer",
@@ -91,6 +86,11 @@
       "key": "remaining_climate_time",
       "dataFieldName": "remaining_climate_time",
       "value": "0 s"
+    },
+    {
+      "key": "captured_secondary",
+      "dataFieldName": "car_captured_time",
+      "value": "2026-05-31T15:36:00Z"
     }
   ]
 }

@@ -8,12 +8,16 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from vw_euda_mqtt.api import DatasetDownload, DatasetFile  # noqa: E402
 from vw_euda_mqtt.data import (  # noqa: E402
     Dataset,
+    curated_capture_values,
     curated_values,
+    history_batch,
     parse_timestamp,
     parse_value,
-    raw_values,
+    raw_file_values,
+    structured_values,
     topic_safe,
 )
 
@@ -57,24 +61,33 @@ class ValueParsingTests(unittest.TestCase):
 
 
 class DatasetTests(unittest.TestCase):
-    def test_dataset_from_json_parses_points_and_latest_capture_time(self) -> None:
+    def test_dataset_from_json_parses_points_groups_and_latest_capture_time(self) -> None:
         dataset = Dataset.from_json(
             {
                 "vin": "TESTVIN1234567890",
                 "user_id": "user-1",
                 "Data": [
-                    {"key": "b", "dataFieldName": "car_captured_time", "value": "2026-01-02T03:04:05Z"},
-                    {"key": "a", "dataFieldName": "car_captured_time", "value": "2026-01-02T03:05:05Z"},
-                    {"key": "ignored-no-key", "value": "123"},
-                    {"key": "soc", "dataFieldName": "battery_state_report.soc", "value": "77"},
+                    {"key": "soc_old", "dataFieldName": "battery_state_report.soc", "value": "77"},
+                    {"key": "captured_old", "dataFieldName": "car_captured_time", "value": "2026-01-02T03:04:05Z"},
+                    {"dataFieldName": "ignored-no-key", "value": "123"},
+                    {"key": "soc_new", "dataFieldName": "battery_state_report.soc", "value": "78"},
+                    {"key": "captured_new", "dataFieldName": "car_captured_time", "value": "2026-01-02T03:05:05Z"},
                 ],
             }
         )
 
+        old_capture = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
+        new_capture = datetime(2026, 1, 2, 3, 5, 5, tzinfo=timezone.utc)
         self.assertEqual(dataset.vin, "TESTVIN1234567890")
         self.assertEqual(dataset.user_id, "user-1")
-        self.assertEqual(dataset.captured_at, datetime(2026, 1, 2, 3, 5, 5, tzinfo=timezone.utc))
-        self.assertEqual(dataset.by_field("battery_state_report.soc").value, 77)
+        self.assertEqual(dataset.captured_at, new_capture)
+        self.assertEqual(len(dataset.groups), 2)
+        self.assertEqual([point.key for point in dataset.groups[0].points], ["soc_old", "captured_old"])
+        self.assertEqual([point.key for point in dataset.groups[1].points], ["soc_new", "captured_new"])
+        self.assertEqual(dataset.points["soc_old"].group_index, 0)
+        self.assertEqual(dataset.points["soc_old"].car_captured_at, old_capture)
+        self.assertEqual(dataset.points["captured_new"].car_captured_at, new_capture)
+        self.assertEqual(dataset.by_field("battery_state_report.soc").value, 78)
         self.assertIsNone(dataset.by_field("missing"))
 
     def test_by_field_returns_stable_lowest_key_match(self) -> None:
@@ -90,7 +103,40 @@ class DatasetTests(unittest.TestCase):
         self.assertEqual(dataset.by_field("range").key, "a")
         self.assertEqual(dataset.by_field("range").value, 301)
 
-    def test_curated_and_raw_values_use_expected_topics(self) -> None:
+    def test_by_field_prefers_latest_car_capture_group(self) -> None:
+        dataset = Dataset.from_json(
+            {
+                "Data": [
+                    {"key": "newer_lexically", "dataFieldName": "range", "value": "300"},
+                    {"key": "captured_old", "dataFieldName": "car_captured_time", "value": "2026-01-02T03:04:05Z"},
+                    {"key": "a_older_lexically", "dataFieldName": "range", "value": "301"},
+                    {"key": "captured_new", "dataFieldName": "car_captured_time", "value": "2026-01-02T03:05:05Z"},
+                ]
+            }
+        )
+
+        self.assertEqual(dataset.by_field("range").key, "a_older_lexically")
+        self.assertEqual(dataset.by_field("range").value, 301)
+
+    def test_trailing_points_inherit_last_capture_time(self) -> None:
+        dataset = Dataset.from_json(
+            {
+                "Data": [
+                    {"key": "range", "dataFieldName": "range", "value": "300"},
+                    {"key": "captured", "dataFieldName": "car_captured_time", "value": "2026-01-02T03:04:05Z"},
+                    {"key": "soc", "dataFieldName": "battery_state_report.soc", "value": "80"},
+                ]
+            }
+        )
+
+        captured_at = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
+        self.assertEqual(len(dataset.groups), 1)
+        self.assertEqual([point.key for point in dataset.groups[0].points], ["range", "captured", "soc"])
+        self.assertEqual(dataset.points["soc"].group_index, 0)
+        self.assertEqual(dataset.points["soc"].car_captured_at, captured_at)
+        self.assertEqual(curated_capture_values(dataset)["battery/soc/car_captured_at"], captured_at.isoformat())
+
+    def test_curated_and_structured_values_use_expected_topics(self) -> None:
         dataset = Dataset.from_json(
             {
                 "Data": [
@@ -98,6 +144,7 @@ class DatasetTests(unittest.TestCase):
                     {"key": "range", "dataFieldName": "range", "value": "321"},
                     {"key": "door", "dataFieldName": "locked", "value": "true"},
                     {"key": "odd", "dataFieldName": "bad field/name", "value": "text"},
+                    {"key": "captured", "dataFieldName": "car_captured_time", "value": "2026-01-02T03:04:05Z"},
                 ]
             }
         )
@@ -110,20 +157,42 @@ class DatasetTests(unittest.TestCase):
                 "doors/locked": True,
             },
         )
-        raw = raw_values(dataset)
-        self.assertEqual(raw["raw/bad_field_name"], "text")
-        self.assertEqual(raw["raw/by_key/odd"], "text")
-        self.assertEqual(raw["raw/by_field/bad_field_name/odd"], "text")
         self.assertEqual(
-            raw["raw/_topic_index"]["odd"],
+            curated_capture_values(dataset),
             {
-                "field_name": "bad field/name",
-                "by_key_topic": "raw/by_key/odd",
-                "by_field_topic": "raw/by_field/bad_field_name/odd",
+                "battery/soc/car_captured_at": "2026-01-02T03:04:05+00:00",
+                "range/km/car_captured_at": "2026-01-02T03:04:05+00:00",
+                "doors/locked/car_captured_at": "2026-01-02T03:04:05+00:00",
             },
         )
+        structured = structured_values(dataset)
+        self.assertEqual(structured["structured/by_key/odd/value"], "text")
+        self.assertEqual(structured["structured/by_key/odd/name"], "bad field/name")
+        self.assertEqual(structured["structured/by_key/odd/unit"], "")
+        self.assertEqual(structured["structured/by_key/odd/description"], "")
+        self.assertEqual(structured["structured/by_key/odd/car_captured_at"], "2026-01-02T03:04:05+00:00")
+        self.assertEqual(structured["structured/by_key/odd/field_name"], "bad field/name")
+        self.assertEqual(structured["structured/by_key/odd/group_index"], 0)
+        self.assertEqual(structured["structured/by_key/odd/key"], "odd")
+        self.assertEqual(structured["structured/by_key/odd/json"]["value"], "text")
+        self.assertEqual(structured["structured/by_key/odd/json"]["name"], "bad field/name")
+        self.assertEqual(structured["structured/by_key/odd/json"]["raw_value"], "text")
+        self.assertEqual(structured["structured/by_key/odd/json"]["car_captured_at"], "2026-01-02T03:04:05+00:00")
+        self.assertEqual(structured["structured/by_key/odd/json"]["topics"]["by_key"], "structured/by_key/odd")
+        self.assertEqual(structured["structured/by_name/bad_field_name/value"], "text")
+        self.assertEqual(structured["structured/by_name/bad_field_name/key"], "odd")
+        self.assertEqual(structured["structured/by_name/bad_field_name/car_captured_at"], "2026-01-02T03:04:05+00:00")
+        self.assertEqual(structured["structured/by_name/range/unit"], "km")
+        self.assertEqual(structured["structured/by_name/range/description"], "Reported electric range.")
+        self.assertEqual(
+            structured["structured/by_name/bad_field_name/keys"],
+            [{"key": "odd", "car_captured_at": "2026-01-02T03:04:05+00:00"}],
+        )
+        self.assertFalse(any(value is None for value in structured.values()))
+        self.assertFalse(any(topic.startswith("raw/") for topic in structured))
+        self.assertFalse(any(topic.startswith("structured/groups/") for topic in structured))
 
-    def test_raw_values_keep_duplicate_field_names_without_overwriting(self) -> None:
+    def test_structured_values_keep_duplicate_names_without_overwriting(self) -> None:
         dataset = Dataset.from_json(
             {
                 "Data": [
@@ -133,13 +202,76 @@ class DatasetTests(unittest.TestCase):
             }
         )
 
-        raw = raw_values(dataset)
+        structured = structured_values(dataset)
 
-        self.assertEqual(raw["raw/by_key/timestamp_a"], 1)
-        self.assertEqual(raw["raw/by_key/timestamp_b"], 2)
-        self.assertEqual(raw["raw/by_field/timestamp/timestamp_a"], 1)
-        self.assertEqual(raw["raw/by_field/timestamp/timestamp_b"], 2)
-        self.assertNotIn("raw/timestamp", raw)
+        self.assertEqual(structured["structured/by_key/timestamp_a/value"], 1)
+        self.assertEqual(structured["structured/by_key/timestamp_b/value"], 2)
+        self.assertEqual(structured["structured/by_name/timestamp/value"], 2)
+        self.assertEqual(structured["structured/by_name/timestamp/key"], "timestamp_b")
+        self.assertEqual(structured["structured/by_key/timestamp_a/name"], "timestamp")
+        self.assertEqual(structured["structured/by_key/timestamp_b/name"], "timestamp")
+        self.assertEqual(structured["structured/by_key/timestamp_a/car_captured_at"], "")
+        self.assertEqual(structured["structured/by_key/timestamp_b/car_captured_at"], "")
+        self.assertEqual(
+            structured["structured/by_name/timestamp/keys"],
+            [
+                {"key": "timestamp_b", "car_captured_at": ""},
+                {"key": "timestamp_a", "car_captured_at": ""},
+            ],
+        )
+        self.assertNotIn("structured/by_name/timestamp/timestamp_a/value", structured)
+        self.assertNotIn("raw/_index", structured)
+
+    def test_history_batch_keeps_duplicate_keys_with_original_capture_times(self) -> None:
+        dataset = Dataset.from_json(
+            {
+                "vin": "TESTVIN1234567890",
+                "Data": [
+                    {"key": "soc", "dataFieldName": "battery_state_report.soc", "value": "77"},
+                    {"key": "captured_old", "dataFieldName": "car_captured_time", "value": "2026-01-02T03:04:05Z"},
+                    {"key": "soc", "dataFieldName": "battery_state_report.soc", "value": "78"},
+                    {"key": "captured_new", "dataFieldName": "car_captured_time", "value": "2026-01-02T03:05:05Z"},
+                    {"key": "orphan", "dataFieldName": "range", "value": "300"},
+                ],
+            }
+        )
+
+        batch = history_batch(dataset, "dataset.zip")
+
+        self.assertEqual(batch["vin"], "TESTVIN1234567890")
+        self.assertEqual(batch["dataset"], "dataset.zip")
+        self.assertEqual(batch["event_count"], 3)
+        values = [event["value"] for event in batch["events"]]
+        self.assertEqual(values, [77, 78, 300])
+        self.assertEqual(
+            [event["car_captured_at"] for event in batch["events"]],
+            [
+                "2026-01-02T03:04:05+00:00",
+                "2026-01-02T03:05:05+00:00",
+                "2026-01-02T03:05:05+00:00",
+            ],
+        )
+        self.assertEqual(batch["events"][0]["curated_topic"], "battery/soc")
+        self.assertEqual(batch["events"][0]["structured_by_key_topic"], "structured/by_key/soc")
+        self.assertEqual(batch["events"][0]["structured_by_name_topic"], "structured/by_name/soc")
+        self.assertEqual(batch["events"][0]["unit"], "%")
+        self.assertTrue(all(event["field_name"] != "car_captured_time" for event in batch["events"]))
+        self.assertEqual(len({event["event_id"] for event in batch["events"]}), 3)
+        self.assertEqual(dataset.by_field("battery_state_report.soc").value, 78)
+
+    def test_history_batch_excludes_points_without_capture_time(self) -> None:
+        dataset = Dataset.from_json(
+            {
+                "Data": [
+                    {"key": "range", "dataFieldName": "range", "value": "300"},
+                ]
+            }
+        )
+
+        batch = history_batch(dataset, "dataset.zip")
+
+        self.assertEqual(batch["event_count"], 0)
+        self.assertEqual(batch["events"], [])
 
     def test_redacted_audi_fixture_exposes_expected_normalized_topics(self) -> None:
         fixture = Path(__file__).parent / "fixtures" / "audi_dataset_redacted.json"
@@ -159,12 +291,62 @@ class DatasetTests(unittest.TestCase):
         self.assertEqual(values["battery/max_temperature_c"], 19.0)
         self.assertEqual(values["climate/remaining_time_s"], 0.0)
 
-        raw = raw_values(dataset)
-        self.assertEqual(raw["raw/by_key/captured_main"], "2026-05-31T15:35:00Z")
-        self.assertEqual(raw["raw/by_key/captured_secondary"], "2026-05-31T15:36:00Z")
-        self.assertEqual(raw["raw/by_field/car_captured_time/captured_main"], "2026-05-31T15:35:00Z")
-        self.assertEqual(raw["raw/by_field/car_captured_time/captured_secondary"], "2026-05-31T15:36:00Z")
-        self.assertNotIn("raw/car_captured_time", raw)
+        structured = structured_values(dataset)
+        soc_key = "506cb83e-f99f-3af3-bbeb-0429b69a78d9"
+        self.assertEqual(structured["structured/by_key/captured_main/value"], "2026-05-31T15:35:00Z")
+        self.assertEqual(structured["structured/by_key/captured_secondary/value"], "2026-05-31T15:36:00Z")
+        self.assertEqual(structured["structured/by_key/captured_main/name"], "car_captured_time")
+        self.assertEqual(
+            structured["structured/by_name/car_captured_time/description"],
+            "Vehicle-side capture timestamp assigned to the surrounding datapoint group.",
+        )
+        self.assertEqual(structured[f"structured/by_key/{soc_key}/value"], 52)
+        self.assertEqual(structured[f"structured/by_key/{soc_key}/unit"], "%")
+        self.assertEqual(structured[f"structured/by_key/{soc_key}/car_captured_at"], "2026-05-31T15:35:00+00:00")
+        self.assertEqual(structured["structured/by_name/soc/value"], 52)
+        self.assertEqual(structured["structured/by_name/soc/key"], soc_key)
+        self.assertEqual(structured[f"structured/by_key/{soc_key}/name"], "soc")
+        self.assertEqual(structured[f"structured/by_key/{soc_key}/json"]["description"], "Battery state of charge.")
+        self.assertEqual(structured["structured/by_key/odometer/value"], 63151)
+        self.assertEqual(structured["structured/by_key/odometer/unit"], "km")
+        self.assertEqual(structured["structured/by_key/odometer/car_captured_at"], "2026-05-31T15:36:00+00:00")
+        self.assertEqual(values["battery/soc"], 52)
+        self.assertEqual(curated_capture_values(dataset)["battery/soc/car_captured_at"], "2026-05-31T15:35:00+00:00")
+        self.assertEqual(curated_capture_values(dataset)["odometer/km/car_captured_at"], "2026-05-31T15:36:00+00:00")
+        self.assertFalse(any(topic.startswith("raw/") for topic in structured))
+        self.assertFalse(any(value is None for value in structured.values()))
+
+    def test_raw_file_values_publish_zip_members_only(self) -> None:
+        download = DatasetDownload(
+            name="dataset.zip",
+            payload={},
+            files=[
+                DatasetFile(
+                    name="data/vehicle.xml",
+                    media_type="application/xml",
+                    content="<vehicle><soc>52</soc></vehicle>",
+                    sha256="abc123",
+                    xml_json={"tag": "vehicle", "children": [{"tag": "soc", "text": "52"}]},
+                ),
+                DatasetFile(
+                    name="data.json",
+                    media_type="application/json",
+                    content='{"ok":true}',
+                    sha256="def456",
+                ),
+            ],
+        )
+
+        values = raw_file_values(download)
+
+        self.assertEqual(values["raw/file/0/filename"], "data/vehicle.xml")
+        self.assertEqual(values["raw/file/0/content"], "<vehicle><soc>52</soc></vehicle>")
+        self.assertEqual(values["raw/file/1/filename"], "data.json")
+        self.assertEqual(values["raw/file/1/content"], '{"ok":true}')
+        self.assertNotIn("raw/file/0/xml_json", values)
+        self.assertNotIn("raw/file/0/sha256", values)
+        self.assertFalse(any(topic.startswith("raw/by_") for topic in values))
+        self.assertNotIn("raw/_index", values)
 
 
 if __name__ == "__main__":

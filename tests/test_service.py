@@ -13,7 +13,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from vw_euda_mqtt import __version__  # noqa: E402
-from vw_euda_mqtt.api import ApiError  # noqa: E402
+from vw_euda_mqtt.api import ApiError, DatasetDownload, DatasetFile  # noqa: E402
 from vw_euda_mqtt.data import Dataset  # noqa: E402
 from vw_euda_mqtt.service import (  # noqa: E402
     HOMEASSISTANT_BINARY_SENSOR_ENTITIES,
@@ -27,7 +27,11 @@ from vw_euda_mqtt.service import (  # noqa: E402
     _load_state,
     _mqtt_payload,
     _next_sleep,
+    _original_data_dir_path,
+    _retain_for_topic,
+    _safe_original_data_filename,
     _save_state,
+    _select_vehicle_and_identifier,
     _state_path,
     healthcheck,
     publish_carcompat,
@@ -35,6 +39,7 @@ from vw_euda_mqtt.service import (  # noqa: E402
     publish_homeassistant_discovery,
     publish_status,
     run_service,
+    save_original_dataset,
 )
 
 
@@ -54,11 +59,14 @@ class ConfigAndStateTests(unittest.TestCase):
                             "host": "mqtt.example.local",
                             "base_topic": "/cars/euda/",
                             "publish_raw": True,
+                            "publish_history": True,
                             "publish_carcompat": True,
                             "carcompat_base_topic": "/garage/",
                             "publish_homeassistant_discovery": True,
                             "homeassistant_discovery_prefix": "/ha/",
                         },
+                        "save_original_data": True,
+                        "original_data_dir": "archive/original",
                     }
                 ),
                 encoding="utf-8",
@@ -69,13 +77,27 @@ class ConfigAndStateTests(unittest.TestCase):
         self.assertEqual(config.email, "user@example.com")
         self.assertIsNone(config.vin)
         self.assertEqual(config.portal.oidc_state, "de__de__AUDI")
+        self.assertTrue(config.save_original_data)
+        self.assertEqual(config.original_data_dir, "archive/original")
         self.assertEqual(config.mqtt.host, "mqtt.example.local")
         self.assertEqual(config.mqtt.base_topic, "cars/euda")
+        self.assertFalse(config.mqtt.retain)
         self.assertTrue(config.mqtt.publish_raw)
+        self.assertTrue(config.mqtt.publish_history)
         self.assertTrue(config.mqtt.publish_carcompat)
         self.assertEqual(config.mqtt.carcompat_base_topic, "garage")
         self.assertTrue(config.mqtt.publish_homeassistant_discovery)
         self.assertEqual(config.mqtt.homeassistant_discovery_prefix, "ha")
+        self.assertTrue(config.mqtt.homeassistant_discovery_retain)
+
+    def test_example_config_disables_retain_by_default(self) -> None:
+        example = json.loads((Path(__file__).resolve().parents[1] / "config.example.json").read_text(encoding="utf-8"))
+
+        self.assertIs(example["mqtt"]["retain"], False)
+        self.assertIs(example["mqtt"]["publish_history"], False)
+        self.assertIs(example["mqtt"]["homeassistant_discovery_retain"], True)
+        self.assertIs(example["save_original_data"], False)
+        self.assertEqual(example["original_data_dir"], "data/original")
 
     def test_service_config_from_file_accepts_environment_overrides(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -132,6 +154,52 @@ class ConfigAndStateTests(unittest.TestCase):
     def test_state_path_keeps_absolute_paths(self) -> None:
         absolute = Path.cwd() / "state.json"
         self.assertEqual(_state_path(Path("config.json"), str(absolute)), absolute)
+
+    def test_original_data_dir_resolves_relative_to_config_file(self) -> None:
+        self.assertEqual(
+            _original_data_dir_path(Path("configs/config.json"), "data/original"),
+            Path("configs/data/original"),
+        )
+
+    def test_safe_original_data_filename_removes_path_segments_and_unsafe_chars(self) -> None:
+        self.assertEqual(_safe_original_data_filename("../portal dataset.zip"), "portal_dataset.zip")
+        self.assertEqual(_safe_original_data_filename("nested\\dataset:1.zip"), "dataset_1.zip")
+        self.assertEqual(_safe_original_data_filename(""), "dataset.zip")
+
+    def test_save_original_dataset_writes_raw_zip_when_enabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "config.json"
+            config = ServiceConfig(
+                email="user@example.com",
+                password="example-password",
+                save_original_data=True,
+                original_data_dir="archive",
+                mqtt=MqttConfig(host="mqtt.example.local"),
+            )
+            download = DatasetDownload(
+                name="../portal dataset.zip",
+                payload={"ok": True},
+                files=[],
+                raw=b"original zip bytes",
+            )
+
+            saved = save_original_dataset(config, config_path, download)
+
+            self.assertEqual(saved, Path(tmp) / "archive" / "portal_dataset.zip")
+            self.assertEqual(saved.read_bytes(), b"original zip bytes")
+
+    def test_save_original_dataset_is_disabled_by_default(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "config.json"
+            config = ServiceConfig(
+                email="user@example.com",
+                password="example-password",
+                mqtt=MqttConfig(host="mqtt.example.local"),
+            )
+            download = DatasetDownload(name="dataset.zip", payload={}, files=[], raw=b"raw")
+
+            self.assertIsNone(save_original_dataset(config, config_path, download))
+            self.assertFalse((Path(tmp) / "data").exists())
 
     def test_healthcheck_accepts_recent_successful_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -242,6 +310,51 @@ class SchedulingTests(unittest.TestCase):
         self.assertEqual(client.calls, 3)
         self.assertEqual(sleeps, [5, 10])
 
+    def test_select_vehicle_and_identifier_reuses_matching_state_values(self) -> None:
+        client = _VehicleIdentifierClient()
+        config = ServiceConfig(email="user@example.com", password="example-password")
+        state = {"vin": "TESTVIN1234567890", "identifier": "cached-identifier"}
+
+        vin, identifier = asyncio.run(_select_vehicle_and_identifier(client, config, state))
+
+        self.assertEqual(vin, "TESTVIN1234567890")
+        self.assertEqual(identifier, "cached-identifier")
+        self.assertEqual(client.vehicle_calls, 0)
+        self.assertEqual(client.metadata_calls, 0)
+
+    def test_select_vehicle_and_identifier_does_not_reuse_identifier_for_different_configured_vin(self) -> None:
+        client = _VehicleIdentifierClient(metadata={"Identifier": "fresh-identifier"})
+        config = ServiceConfig(
+            email="user@example.com",
+            password="example-password",
+            vin="TESTVIN0000000001",
+        )
+        state = {"vin": "TESTVIN1234567890", "identifier": "cached-identifier"}
+
+        vin, identifier = asyncio.run(_select_vehicle_and_identifier(client, config, state))
+
+        self.assertEqual(vin, "TESTVIN0000000001")
+        self.assertEqual(identifier, "fresh-identifier")
+        self.assertEqual(client.vehicle_calls, 0)
+        self.assertEqual(client.metadata_calls, 1)
+
+    def test_select_vehicle_and_identifier_prefers_config_identifier(self) -> None:
+        client = _VehicleIdentifierClient()
+        config = ServiceConfig(
+            email="user@example.com",
+            password="example-password",
+            vin="TESTVIN0000000001",
+            identifier="configured-identifier",
+        )
+        state = {"vin": "TESTVIN1234567890", "identifier": "cached-identifier"}
+
+        vin, identifier = asyncio.run(_select_vehicle_and_identifier(client, config, state))
+
+        self.assertEqual(vin, "TESTVIN0000000001")
+        self.assertEqual(identifier, "configured-identifier")
+        self.assertEqual(client.vehicle_calls, 0)
+        self.assertEqual(client.metadata_calls, 0)
+
 
 class PublishTests(unittest.TestCase):
     def test_mqtt_payload_serializes_supported_values(self) -> None:
@@ -251,7 +364,19 @@ class PublishTests(unittest.TestCase):
         self.assertEqual(_mqtt_payload({"b": 2, "a": 1}), '{"b":2,"a":1}')
         self.assertEqual(_mqtt_payload(12.5), "12.5")
 
-    def test_publish_dataset_emits_status_curated_raw_and_carcompat_topics(self) -> None:
+    def test_retain_for_topic_skips_heavy_payload_helpers(self) -> None:
+        config = MqttConfig(host="mqtt.example.local", retain=True)
+
+        self.assertTrue(_retain_for_topic(config, "battery/soc", 80))
+        self.assertTrue(_retain_for_topic(config, "structured/by_key/soc/value", 80))
+        self.assertTrue(_retain_for_topic(config, "structured/by_name/soc/description", "x"))
+        self.assertTrue(_retain_for_topic(config, "raw/file/0/filename", "data.xml"))
+        self.assertFalse(_retain_for_topic(config, "structured/by_key/soc/json", {}))
+        self.assertFalse(_retain_for_topic(config, "raw/file/0/content", "<xml/>"))
+        self.assertFalse(_retain_for_topic(config, "history/batch/json", {"events": []}))
+        self.assertFalse(_retain_for_topic(MqttConfig(host="mqtt.example.local", retain=False), "battery/soc", 80))
+
+    def test_publish_dataset_emits_status_curated_structured_raw_files_and_carcompat_topics(self) -> None:
         fake_class = _recording_publisher_class()
         config = ServiceConfig(
             email="user@example.com",
@@ -259,6 +384,7 @@ class PublishTests(unittest.TestCase):
             mqtt=MqttConfig(
                 host="mqtt.example.local",
                 base_topic="vw/euda",
+                retain=True,
                 publish_raw=True,
                 publish_carcompat=True,
                 carcompat_base_topic="car",
@@ -272,9 +398,28 @@ class PublishTests(unittest.TestCase):
             ]
         }
         dataset = Dataset.from_json(raw_payload)
+        download = DatasetDownload(
+            name="dataset.zip",
+            payload=raw_payload,
+            files=[
+                DatasetFile(
+                    name="data.json",
+                    media_type="application/json",
+                    content=json.dumps(raw_payload),
+                    sha256="a" * 64,
+                ),
+                DatasetFile(
+                    name="vehicle.xml",
+                    media_type="application/xml",
+                    content="<vehicle><soc>80</soc></vehicle>",
+                    sha256="b" * 64,
+                    xml_json={"tag": "vehicle", "children": [{"tag": "soc", "text": "80"}]},
+                ),
+            ],
+        )
 
         with patch("vw_euda_mqtt.service.MqttPublisher", fake_class):
-            publish_dataset(config, "TESTVIN1234567890", "dataset.zip", dataset, raw_payload)
+            publish_dataset(config, "TESTVIN1234567890", "dataset.zip", dataset, raw_payload, download=download)
 
         published = dict(fake_class.instances[-1].published)
         self.assertEqual(published["vw/euda/TESTVIN1234567890/status/online"], True)
@@ -286,10 +431,133 @@ class PublishTests(unittest.TestCase):
         self.assertIsInstance(published["vw/euda/TESTVIN1234567890/status/data_age_seconds"], int)
         self.assertIsInstance(published["vw/euda/TESTVIN1234567890/status/stale"], bool)
         self.assertEqual(published["vw/euda/TESTVIN1234567890/battery/soc"], 80)
+        self.assertEqual(
+            published["vw/euda/TESTVIN1234567890/battery/soc/car_captured_at"],
+            "2026-01-02T03:04:05+00:00",
+        )
         self.assertEqual(published["vw/euda/TESTVIN1234567890/range/km"], 321)
-        self.assertEqual(published["vw/euda/TESTVIN1234567890/raw/range"], 321)
+        self.assertEqual(
+            published["vw/euda/TESTVIN1234567890/range/km/car_captured_at"],
+            "2026-01-02T03:04:05+00:00",
+        )
+        self.assertNotIn("vw/euda/TESTVIN1234567890/json", published)
+        self.assertEqual(published["vw/euda/TESTVIN1234567890/structured/by_key/range/value"], 321)
+        self.assertEqual(published["vw/euda/TESTVIN1234567890/structured/by_key/range/unit"], "km")
+        self.assertEqual(published["vw/euda/TESTVIN1234567890/structured/by_name/range/value"], 321)
+        self.assertEqual(published["vw/euda/TESTVIN1234567890/structured/by_key/soc/value"], 80)
+        self.assertEqual(published["vw/euda/TESTVIN1234567890/structured/by_key/soc/unit"], "%")
+        self.assertEqual(published["vw/euda/TESTVIN1234567890/structured/by_name/soc/value"], 80)
+        self.assertEqual(published["vw/euda/TESTVIN1234567890/structured/by_name/soc/key"], "soc")
+        self.assertEqual(published["vw/euda/TESTVIN1234567890/structured/by_key/soc/name"], "soc")
+        self.assertEqual(
+            published["vw/euda/TESTVIN1234567890/structured/by_key/soc/car_captured_at"],
+            "2026-01-02T03:04:05+00:00",
+        )
+        self.assertEqual(
+            published["vw/euda/TESTVIN1234567890/structured/by_key/soc/json"]["description"],
+            "Battery state of charge.",
+        )
+        self.assertEqual(
+            published["vw/euda/TESTVIN1234567890/structured/by_name/soc/keys"],
+            [{"key": "soc", "car_captured_at": "2026-01-02T03:04:05+00:00"}],
+        )
+        self.assertEqual(published["vw/euda/TESTVIN1234567890/raw/file/0/filename"], "data.json")
+        self.assertEqual(published["vw/euda/TESTVIN1234567890/raw/file/0/content"], json.dumps(raw_payload))
+        self.assertEqual(published["vw/euda/TESTVIN1234567890/raw/file/1/filename"], "vehicle.xml")
+        self.assertEqual(published["vw/euda/TESTVIN1234567890/raw/file/1/content"], "<vehicle><soc>80</soc></vehicle>")
+        self.assertNotIn("vw/euda/TESTVIN1234567890/raw/file/1/xml_json", published)
+        self.assertNotIn("vw/euda/TESTVIN1234567890/raw/file/1/sha256", published)
+        self.assertFalse(any("/raw/by_" in topic for topic in published))
+        self.assertFalse(any("/raw/groups/" in topic for topic in published))
+        self.assertFalse(any("/raw/files/" in topic for topic in published))
+        self.assertFalse(any(value is None for value in published.values()))
+        retained = fake_class.instances[-1].retained
+        self.assertTrue(retained["vw/euda/TESTVIN1234567890/structured/by_key/soc/value"])
+        self.assertTrue(retained["vw/euda/TESTVIN1234567890/structured/by_name/soc/value"])
+        self.assertFalse(retained["vw/euda/TESTVIN1234567890/structured/by_key/soc/json"])
+        self.assertTrue(retained["vw/euda/TESTVIN1234567890/raw/file/1/filename"])
+        self.assertFalse(retained["vw/euda/TESTVIN1234567890/raw/file/1/content"])
         self.assertEqual(published["car/garage/TESTVIN1234567890/drives/primary/level"], 80)
         self.assertEqual(published["car/garage/TESTVIN1234567890/drives/primary/range"], 321)
+
+    def test_publish_dataset_does_not_retain_by_default(self) -> None:
+        fake_class = _recording_publisher_class()
+        config = ServiceConfig(
+            email="user@example.com",
+            password="example-password",
+            mqtt=MqttConfig(host="mqtt.example.local", base_topic="vw/euda", publish_raw=True),
+        )
+        raw_payload = {
+            "Data": [
+                {"key": "soc", "dataFieldName": "battery_state_report.soc", "value": "80"},
+            ]
+        }
+        dataset = Dataset.from_json(raw_payload)
+
+        with patch("vw_euda_mqtt.service.MqttPublisher", fake_class):
+            publish_dataset(config, "TESTVIN1234567890", "dataset.zip", dataset, raw_payload)
+
+        self.assertFalse(any(fake_class.instances[-1].retained.values()))
+
+    def test_publish_dataset_can_emit_live_only_history_batch(self) -> None:
+        fake_class = _recording_publisher_class()
+        config = ServiceConfig(
+            email="user@example.com",
+            password="example-password",
+            mqtt=MqttConfig(
+                host="mqtt.example.local",
+                base_topic="vw/euda",
+                retain=True,
+                publish_history=True,
+            ),
+        )
+        raw_payload = {
+            "vin": "TESTVIN1234567890",
+            "Data": [
+                {"key": "soc", "dataFieldName": "battery_state_report.soc", "value": "77"},
+                {"key": "captured_old", "dataFieldName": "car_captured_time", "value": "2026-01-02T03:04:05Z"},
+                {"key": "soc", "dataFieldName": "battery_state_report.soc", "value": "78"},
+                {"key": "captured_new", "dataFieldName": "car_captured_time", "value": "2026-01-02T03:05:05Z"},
+            ],
+        }
+        dataset = Dataset.from_json(raw_payload)
+
+        with patch("vw_euda_mqtt.service.MqttPublisher", fake_class):
+            publish_dataset(config, "TESTVIN1234567890", "dataset.zip", dataset, raw_payload)
+
+        topic = "vw/euda/TESTVIN1234567890/history/batch/json"
+        published = dict(fake_class.instances[-1].published)
+        batch = published[topic]
+        self.assertEqual(batch["event_count"], 2)
+        self.assertEqual([event["value"] for event in batch["events"]], [77, 78])
+        self.assertEqual(
+            [event["car_captured_at"] for event in batch["events"]],
+            ["2026-01-02T03:04:05+00:00", "2026-01-02T03:05:05+00:00"],
+        )
+        self.assertEqual(batch["events"][0]["curated_topic"], "battery/soc")
+        self.assertFalse(any(event["field_name"] == "car_captured_time" for event in batch["events"]))
+        self.assertFalse(fake_class.instances[-1].retained[topic])
+
+    def test_publish_dataset_skips_history_batch_by_default(self) -> None:
+        fake_class = _recording_publisher_class()
+        config = ServiceConfig(
+            email="user@example.com",
+            password="example-password",
+            mqtt=MqttConfig(host="mqtt.example.local", base_topic="vw/euda"),
+        )
+        raw_payload = {
+            "Data": [
+                {"key": "soc", "dataFieldName": "battery_state_report.soc", "value": "80"},
+                {"key": "captured", "dataFieldName": "car_captured_time", "value": "2026-01-02T03:04:05Z"},
+            ]
+        }
+        dataset = Dataset.from_json(raw_payload)
+
+        with patch("vw_euda_mqtt.service.MqttPublisher", fake_class):
+            publish_dataset(config, "TESTVIN1234567890", "dataset.zip", dataset, raw_payload)
+
+        published = dict(fake_class.instances[-1].published)
+        self.assertNotIn("vw/euda/TESTVIN1234567890/history/batch/json", published)
 
     def test_publish_dataset_stores_last_valid_odometer(self) -> None:
         fake_class = _recording_publisher_class()
@@ -301,6 +569,7 @@ class PublishTests(unittest.TestCase):
         raw_payload = {
             "Data": [
                 {"key": "odometer", "dataFieldName": "mileage.value", "value": "63151"},
+                {"key": "captured", "dataFieldName": "car_captured_time", "value": "2026-01-02T03:04:05Z"},
             ]
         }
         dataset = Dataset.from_json(raw_payload)
@@ -311,7 +580,12 @@ class PublishTests(unittest.TestCase):
 
         published = dict(fake_class.instances[-1].published)
         self.assertEqual(published["vw/euda/TESTVIN1234567890/odometer/km"], 63151)
+        self.assertEqual(
+            published["vw/euda/TESTVIN1234567890/odometer/km/car_captured_at"],
+            "2026-01-02T03:04:05+00:00",
+        )
         self.assertEqual(state["last_odometer_km"], 63151)
+        self.assertEqual(state["last_odometer_car_captured_at"], "2026-01-02T03:04:05+00:00")
 
     def test_publish_dataset_keeps_previous_odometer_when_new_value_is_zero(self) -> None:
         fake_class = _recording_publisher_class()
@@ -323,16 +597,24 @@ class PublishTests(unittest.TestCase):
         raw_payload = {
             "Data": [
                 {"key": "odometer", "dataFieldName": "mileage.value", "value": "0"},
+                {"key": "captured", "dataFieldName": "car_captured_time", "value": "2026-01-02T03:05:05Z"},
             ]
         }
         dataset = Dataset.from_json(raw_payload)
-        state: dict[str, object] = {"last_odometer_km": 63151}
+        state: dict[str, object] = {
+            "last_odometer_km": 63151,
+            "last_odometer_car_captured_at": "2026-01-02T03:04:05+00:00",
+        }
 
         with patch("vw_euda_mqtt.service.MqttPublisher", fake_class):
             publish_dataset(config, "TESTVIN1234567890", "dataset.zip", dataset, raw_payload, state=state)
 
         published = dict(fake_class.instances[-1].published)
         self.assertEqual(published["vw/euda/TESTVIN1234567890/odometer/km"], 63151)
+        self.assertEqual(
+            published["vw/euda/TESTVIN1234567890/odometer/km/car_captured_at"],
+            "2026-01-02T03:04:05+00:00",
+        )
         self.assertEqual(published["car/garage/TESTVIN1234567890/odometer"], 63151)
         self.assertEqual(state["last_odometer_km"], 63151)
 
@@ -424,6 +706,22 @@ class PublishTests(unittest.TestCase):
         self.assertEqual(doors["payload_on"], "true")
         self.assertEqual(doors["payload_off"], "false")
         self.assertEqual(doors["device_class"], "lock")
+        self.assertTrue(publisher.retained["ha/sensor/vw_euda_testvin1234567890/battery_soc/config"])
+        self.assertTrue(publisher.retained["ha/binary_sensor/vw_euda_testvin1234567890/doors_locked/config"])
+
+    def test_publish_homeassistant_discovery_can_disable_discovery_retain(self) -> None:
+        publisher = _StandaloneRecorder()
+        mqtt_config = MqttConfig(
+            host="mqtt.example.local",
+            base_topic="vw/euda",
+            homeassistant_discovery_prefix="ha",
+            homeassistant_discovery_retain=False,
+        )
+
+        publish_homeassistant_discovery(publisher, mqtt_config, "TESTVIN1234567890")
+
+        self.assertTrue(publisher.published)
+        self.assertFalse(any(publisher.retained.values()))
 
     def test_publish_homeassistant_discovery_covers_all_expected_topics(self) -> None:
         publisher = _StandaloneRecorder()
@@ -520,9 +818,11 @@ class RunServiceTests(unittest.TestCase):
 class _StandaloneRecorder:
     def __init__(self) -> None:
         self.published: list[tuple[str, object]] = []
+        self.retained: dict[str, bool] = {}
 
-    def publish(self, topic: str, value: object) -> None:
+    def publish(self, topic: str, value: object, *, retain: bool | None = None) -> None:
         self.published.append((topic, value))
+        self.retained[topic] = bool(retain)
 
 
 class _DatasetListingClient:
@@ -538,6 +838,22 @@ class _DatasetListingClient:
         return response
 
 
+class _VehicleIdentifierClient:
+    def __init__(self, *, vehicles: list[dict] | None = None, metadata: dict | None = None) -> None:
+        self.vehicles = vehicles or [{"vin": "TESTVIN1234567890"}]
+        self.metadata = metadata or {"Identifier": "metadata-identifier"}
+        self.vehicle_calls = 0
+        self.metadata_calls = 0
+
+    async def async_list_vehicles(self) -> list[dict]:
+        self.vehicle_calls += 1
+        return self.vehicles
+
+    async def async_get_metadata(self, vin: str) -> dict:
+        self.metadata_calls += 1
+        return self.metadata
+
+
 def _recording_publisher_class():
     class RecordingPublisher:
         instances: list[RecordingPublisher] = []
@@ -546,6 +862,8 @@ def _recording_publisher_class():
             self.config = config
             self.dry_run = dry_run
             self.published: list[tuple[str, object]] = []
+            self.retained: dict[str, bool] = {}
+            self.retained_events: list[tuple[str, object, bool]] = []
             self.__class__.instances.append(self)
 
         def __enter__(self) -> RecordingPublisher:
@@ -554,8 +872,11 @@ def _recording_publisher_class():
         def __exit__(self, exc_type, exc, tb) -> None:
             return None
 
-        def publish(self, topic: str, value: object) -> None:
+        def publish(self, topic: str, value: object, *, retain: bool | None = None) -> None:
             self.published.append((topic, value))
+            retain_value = self.config.retain if retain is None else retain
+            self.retained[topic] = retain_value
+            self.retained_events.append((topic, value, retain_value))
 
     return RecordingPublisher
 

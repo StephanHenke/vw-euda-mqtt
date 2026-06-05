@@ -18,8 +18,9 @@ Fahrzeugdaten aus dem Volkswagen Konzern und deren Weiterleitung nach MQTT geht.
 
 Der Dienst meldet sich bei `eu-data-act.drivesomethinggreater.com` an, wählt die
 konfigurierte Marke aus, liest die neueste Continuous-Data-ZIP-Datei für eine
-FIN/VIN, extrahiert nützliche Fahrzeugwerte und publiziert sie retained nach
-MQTT.
+FIN/VIN, extrahiert nützliche Fahrzeugwerte und publiziert sie nach MQTT. MQTT
+Retain ist standardmäßig deaktiviert und muss mit `mqtt.retain=true` bewusst
+aktiviert werden.
 
 Der Login- und Dataset-Ansatz basiert auf
 <https://github.com/mikrohard/hass-vw-eu-data-act> (MIT).
@@ -50,9 +51,10 @@ In den Audi/VW-Portaltests zeigte sich zunächst nur die Erzeugung von
 `*_no_content_found.zip`-Platzhalterdateien. Inzwischen wurden echte
 Fahrzeugdatensätze beobachtet und erfolgreich nach MQTT publiziert. Der
 Datadelivery-List-Endpunkt kann jedoch weiterhin intermittierend `HTTP 500`
-liefern. Der Dienst behält deshalb die zuletzt erfolgreich publizierten Werte
-retained im MQTT-Broker und meldet während solcher Polling-Fehler zusätzlich
-einen `PendingData`-Status.
+liefern. Der Dienst kann die zuletzt erfolgreich publizierten Werte nur dann im
+MQTT-Broker retained bereitstellen, wenn `mqtt.retain=true` gesetzt ist;
+ansonsten publiziert er Live-Werte und meldet während solcher Polling-Fehler
+zusätzlich einen `PendingData`-Status.
 
 ## Voraussetzungen im Portal
 
@@ -121,17 +123,31 @@ Wichtige Felder:
 - `identifier`: kann leer bleiben. Der Dienst liest den Continuous-Data-
   Identifier aus den Metadaten.
 - `poll_interval_seconds`: Standard `900`, passend zu 15 Minuten.
+- `save_original_data`: Standard `false`. Wenn `true`, speichert der Dienst jede
+  heruntergeladene originale Portal-ZIP-Datei lokal, bevor nach MQTT publiziert
+  wird.
+- `original_data_dir`: Standard `data/original`. Relative Pfade werden relativ
+  zur `config.json` aufgeloest; im Docker-Betrieb liegt der Ordner damit unter
+  dem gemounteten `/config/data`.
 - `mqtt.host`, `mqtt.port`, `mqtt.username`, `mqtt.password`: MQTT-Zugang.
 - `mqtt.base_topic`: Standard `vw/euda`. Das Topic bleibt aus
   Kompatibilitätsgründen bewusst stabil, auch wenn der Dienst jetzt
   `vwgroup-vehicle2mqtt` heißt.
-- `mqtt.publish_raw`: veröffentlicht zusätzlich alle Rohdaten unter `raw/...`.
+- `mqtt.retain`: Standard `false`. Nur auf `true` setzen, wenn MQTT-Clients nach
+  einem Reconnect die letzten kleinen Status- und Zustandswerte erhalten sollen.
+- `mqtt.publish_raw`: veröffentlicht zusätzlich strukturierte Datenpunkte unter
+  `structured/...` und ZIP-Dateiinhalte unter `raw/file/<index>/...`.
+- `mqtt.publish_history`: Standard `false`. Veröffentlicht einen live-only
+  Backfill-Batch unter `history/batch/json`, damit Systeme wie openHAB Werte mit
+  ihrem originalen `car_captured_at` persistieren können.
 - `mqtt.publish_carcompat`: spiegelt einzelne Werte optional unter
   `car/garage/<vin>/...`.
 - `mqtt.publish_homeassistant_discovery`: veröffentlicht Home-Assistant-
   kompatible MQTT-Autodiscovery-Konfigurationen.
 - `mqtt.homeassistant_discovery_prefix`: Discovery-Prefix, Standard
   `homeassistant`.
+- `mqtt.homeassistant_discovery_retain`: Standard `true`. Retained die Home-
+  Assistant-Discovery-Konfiguration unabhängig von den Fahrzeugwerten.
 
 `config.json` enthält Zugangsdaten und ist deshalb per `.gitignore` vom Git-Repo
 ausgeschlossen.
@@ -287,14 +303,19 @@ Auswahl der veröffentlichten Topics:
 - `battery/min_temperature_c`
 - `battery/max_temperature_c`
 - `climate/remaining_time_s`
-- `json`
+- `<normalized-topic>/car_captured_at`
 
 `status/car_captured_at` ist aus den `car_captured_time`-Einträgen des Pakets
 abgeleitet. Laut VW/Audi-Datenbeschreibung ist dies ein UTC-Zeitpunkt, an dem
 der Bericht fahrzeugseitig bzw. auf dem Weg von ICAS1/OCU zum Backend
-erzeugt/gesendet wurde. Der Dienst nutzt den neuesten dieser Werte als
-Datensatz-Zeitstempel. `status/captured_at` bleibt als kompatibler Alias
-erhalten.
+erzeugt/gesendet wurde. Reale Pakete enthalten mehrere
+`car_captured_time`-Einträge; jeder dieser Zeitstempel schließt die davor stehende
+Datenpunkt-Gruppe ab. Der Dienst nutzt den neuesten dieser Werte als
+Datensatz-Zeitstempel und veröffentlicht die Zeitstempel zusätzlich passend zum
+normalisierten Datenpunkt unter `<normalized-topic>/car_captured_at`. Endet ein
+Paket mit Datenpunkten nach dem letzten `car_captured_time`, werden diese
+Nachläufer dem letzten bekannten Capture-Zeitstempel zugeordnet.
+`status/captured_at` bleibt als kompatibler Alias erhalten.
 `status/last_poll_at` und `status/last_success_at` sind Zeitstempel des
 Dienstes. `status/data_age_seconds` wird aus `car_captured_at` berechnet;
 `status/stale` wird `true`, wenn der Datensatz älter als zwei konfigurierte
@@ -322,20 +343,39 @@ Normalisierte Fahrzeug-Topics:
 | `battery/max_temperature_c` | `max_temperature` | Höchste gemeldete Batterietemperatur |
 | `climate/remaining_time_s` | `remaining_climate_time` | Restlaufzeit der Klimatisierung in Sekunden |
 
-Wenn `mqtt.publish_raw` aktiviert ist, veröffentlicht der Dienst jeden
-einzelnen Datenpunkt des ZIP-Pakets zusätzlich verlustfrei:
+Der EU-Data-Act-Delivery-Endpunkt liefert ZIP-Dateien. Wenn `mqtt.publish_raw`
+aktiviert ist, trennt der Dienst zwei MQTT-Sichten sauber:
 
-- `raw/by_key/<key>`: Wert des Datenpunkts unter dem eindeutigen Paket-Key.
-- `raw/by_field/<dataFieldName>/<key>`: derselbe Wert gruppiert nach
-  `dataFieldName`. Der Key bleibt Teil des Topics, weil reale Pakete mehrfach
-  gleiche Feldnamen wie `timestamp`, `state`, `message_id` oder
-  `car_captured_time` enthalten können.
-- `raw/<dataFieldName>`: kurzer Kompatibilitätspfad für Felder, die im Paket
-  nur einmal vorkommen.
-- `raw/_topic_index`: JSON-Index mit Zuordnung von Paket-Key zu Feldname und
-  den daraus erzeugten MQTT-Topics.
+- `structured/by_name/<datapoint_name>/...`: katalogbasierte Sicht auf einen
+  Datenpunkt. Die direkten Blätter zeigen immer den neuesten Wert zu diesem
+  Namen.
+- `structured/by_name/<datapoint_name>/keys`: JSON-Liste der passenden
+  technischen Keys, neuester zuerst, jeweils mit `key` und `car_captured_at`.
+- `structured/by_key/<datapoint_key>/...`: technische Key-Sicht auf denselben
+  Datenpunkt, basierend auf dem `key` aus dem ZIP-Inhalt.
+- `raw/file/<index>/filename`: ursprünglicher Dateiname im ZIP.
+- `raw/file/<index>/content`: originaler Inhalt dieser ZIP-Datei.
 
-Bei Login- oder Polling-Fehlern schreibt der Dienst retained Fehlerstatus nach:
+Beispiel:
+
+```text
+vw/euda/<vin>/structured/by_name/soc/key
+vw/euda/<vin>/structured/by_name/soc/value
+vw/euda/<vin>/structured/by_name/soc/car_captured_at
+vw/euda/<vin>/structured/by_key/<datapoint_key>/name
+vw/euda/<vin>/raw/file/0/filename
+vw/euda/<vin>/raw/file/0/content
+```
+
+MQTT Retain für Fahrzeug-, Status-, `structured`- und Raw-Werte ist Opt-in.
+Standardmäßig werden diese Topics nicht retained. Wenn `mqtt.retain=true`
+gesetzt ist, können kleine Status- und `structured`-Blätter retained werden.
+`.../json` und Raw-Dateiinhalte bleiben immer reine Live-Publishes. Home-
+Assistant-Discovery-Configs nutzen den separaten Schalter
+`mqtt.homeassistant_discovery_retain`. Der Dienst veröffentlicht keine
+Delete-/Tombstone-Nachrichten für alte Broker-Layouts.
+
+Bei Login- oder Polling-Fehlern schreibt der Dienst Fehlerstatus nach:
 
 ```text
 vw/euda/<vin>/status/...
@@ -360,12 +400,17 @@ Home-Assistant-kompatible MQTT-Autodiscovery kann mit
 liegt in [homeassistant.md](homeassistant.md). Ein minimales Config-Beispiel
 liegt unter
 [homeassistant/mqtt-autodiscovery.example.json](homeassistant/mqtt-autodiscovery.example.json).
+Historische Rückdatierung ist über MQTT-State-Updates nicht möglich; Details
+stehen in [history.md](history.md).
 
 ## openHAB
 
-openHAB kann die retained MQTT-Topics über das MQTT Binding als Generic MQTT
-Thing einbinden. Eine eigene Anleitung liegt in [openhab.md](openhab.md).
-Beispieldateien für Things und Items liegen in [openhab/](openhab/).
+openHAB kann die MQTT-Topics über das MQTT Binding als Generic MQTT Thing
+einbinden. Setze `mqtt.retain=true`, wenn openHAB nach einem Reconnect den
+letzten Zustand erhalten soll. Eine eigene Anleitung liegt in [openhab.md](openhab.md).
+Beispieldateien für Things, Items und den historischen Backfill liegen in
+[openhab/](openhab/). Der Backfill-Weg mit originalen `car_captured_at`-
+Zeitstempeln ist in [history.md](history.md) beschrieben.
 
 ## Fehlersuche
 

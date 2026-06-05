@@ -18,8 +18,16 @@ import aiohttp
 import paho.mqtt.client as mqtt
 
 from . import __version__
-from .api import ApiError, AuthError, EudaApiClient, NO_CONTENT_SUFFIX, PortalConfig
-from .data import Dataset, curated_values, raw_values, topic_safe
+from .api import ApiError, AuthError, DatasetDownload, EudaApiClient, NO_CONTENT_SUFFIX, PortalConfig
+from .data import (
+    Dataset,
+    curated_capture_values,
+    curated_values,
+    history_batch,
+    raw_file_values,
+    structured_values,
+    topic_safe,
+)
 
 LOG = logging.getLogger(__name__)
 HEALTHCHECK_MISSED_POLLS = 4
@@ -36,13 +44,15 @@ class MqttConfig:
     password: str | None = None
     client_id: str = "vwgroup-vehicle2mqtt"
     base_topic: str = "vw/euda"
-    retain: bool = True
+    retain: bool = False
     qos: int = 0
     publish_raw: bool = False
+    publish_history: bool = False
     publish_carcompat: bool = False
     carcompat_base_topic: str = "car"
     publish_homeassistant_discovery: bool = False
     homeassistant_discovery_prefix: str = "homeassistant"
+    homeassistant_discovery_retain: bool = True
 
 
 @dataclass(frozen=True)
@@ -58,6 +68,8 @@ class ServiceConfig:
     retry_interval_seconds: int = 60
     publish_unchanged: bool = False
     state_file: str = "state.json"
+    save_original_data: bool = False
+    original_data_dir: str = "data/original"
     mqtt: MqttConfig | None = None
 
     @classmethod
@@ -77,13 +89,15 @@ class ServiceConfig:
             password=_env_value("VW_EUDA_MQTT_PASSWORD") or mqtt_raw.get("password") or None,
             client_id=mqtt_raw.get("client_id") or "vwgroup-vehicle2mqtt",
             base_topic=(mqtt_raw.get("base_topic") or "vw/euda").strip("/"),
-            retain=bool(mqtt_raw.get("retain", True)),
+            retain=bool(mqtt_raw.get("retain", False)),
             qos=int(mqtt_raw.get("qos", 0)),
             publish_raw=bool(mqtt_raw.get("publish_raw", False)),
+            publish_history=bool(mqtt_raw.get("publish_history", False)),
             publish_carcompat=bool(mqtt_raw.get("publish_carcompat", False)),
             carcompat_base_topic=(mqtt_raw.get("carcompat_base_topic") or "car").strip("/"),
             publish_homeassistant_discovery=bool(mqtt_raw.get("publish_homeassistant_discovery", False)),
             homeassistant_discovery_prefix=(mqtt_raw.get("homeassistant_discovery_prefix") or "homeassistant").strip("/"),
+            homeassistant_discovery_retain=bool(mqtt_raw.get("homeassistant_discovery_retain", True)),
         )
         return cls(
             email=email,
@@ -97,6 +111,8 @@ class ServiceConfig:
             retry_interval_seconds=int(raw.get("retry_interval_seconds", 60)),
             publish_unchanged=bool(raw.get("publish_unchanged", False)),
             state_file=raw.get("state_file") or "state.json",
+            save_original_data=bool(raw.get("save_original_data", False)),
+            original_data_dir=raw.get("original_data_dir") or "data/original",
             mqtt=mqtt_config,
         )
 
@@ -135,8 +151,9 @@ class MqttPublisher:
             self.client.loop_stop()
             self.client.disconnect()
 
-    def publish(self, topic: str, value: Any) -> None:
+    def publish(self, topic: str, value: Any, *, retain: bool | None = None) -> None:
         payload = _mqtt_payload(value)
+        retain_message = self.config.retain if retain is None else retain
         if self.dry_run:
             print(f"{topic} {payload}")
             return
@@ -145,7 +162,7 @@ class MqttPublisher:
             topic,
             payload,
             qos=self.config.qos,
-            retain=self.config.retain,
+            retain=retain_message,
         )
         result.wait_for_publish(timeout=10)
         if result.rc != mqtt.MQTT_ERR_SUCCESS:
@@ -162,6 +179,22 @@ def _mqtt_payload(value: Any) -> str:
     return str(value)
 
 
+def _force_live_topic(topic: str) -> bool:
+    return (
+        topic.endswith("/json")
+        or topic.startswith("raw/file/") and topic.endswith("/content")
+        or topic == "history/batch/json"
+    )
+
+
+def _retain_for_topic(config: MqttConfig, topic: str, value: Any) -> bool:
+    if not config.retain:
+        return False
+    if _force_live_topic(topic):
+        return False
+    return True
+
+
 def _env_value(name: str) -> str | None:
     value = os.environ.get(name)
     if value is None or value == "":
@@ -172,6 +205,35 @@ def _env_value(name: str) -> str | None:
 def _state_path(config_path: Path, state_file: str) -> Path:
     path = Path(state_file)
     return path if path.is_absolute() else config_path.parent / path
+
+
+def _original_data_dir_path(config_path: Path, original_data_dir: str) -> Path:
+    path = Path(original_data_dir)
+    return path if path.is_absolute() else config_path.parent / path
+
+
+def _safe_original_data_filename(name: str) -> str:
+    basename = Path(str(name).replace("\\", "/")).name
+    safe = "".join(char if char.isascii() and (char.isalnum() or char in "._-") else "_" for char in basename)
+    safe = safe.strip("._")
+    return safe or "dataset.zip"
+
+
+def save_original_dataset(config: ServiceConfig, config_path: Path, download: DatasetDownload) -> Path | None:
+    if not config.save_original_data:
+        return None
+    if not download.raw:
+        LOG.warning("Original dataset ZIP %s was not saved because the raw download bytes are empty", download.name)
+        return None
+
+    target_dir = _original_data_dir_path(config_path, config.original_data_dir)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target = target_dir / _safe_original_data_filename(download.name)
+    temp = target.with_name(f".{target.name}.tmp")
+    temp.write_bytes(download.raw)
+    temp.replace(target)
+    LOG.info("Saved original dataset ZIP to %s", target)
+    return target
 
 
 def _load_state(path: Path) -> dict:
@@ -319,26 +381,47 @@ def _stabilize_odometer(values: dict[str, Any], state: dict) -> None:
 
     current = _numeric_value(values["odometer/km"])
     previous = _numeric_value(state.get("last_odometer_km"))
+    current_captured_at = values.get("odometer/km/car_captured_at")
+    previous_captured_at = state.get("last_odometer_car_captured_at")
 
     if current is None or current <= 0:
         if previous is not None:
             LOG.warning("Ignoring implausible odometer value %r, keeping %s km", values["odometer/km"], previous)
             values["odometer/km"] = int(previous) if previous.is_integer() else previous
+            if previous_captured_at:
+                values["odometer/km/car_captured_at"] = previous_captured_at
+            else:
+                values.pop("odometer/km/car_captured_at", None)
         else:
             LOG.warning("Ignoring implausible odometer value %r without previous fallback", values["odometer/km"])
             values.pop("odometer/km", None)
+            values.pop("odometer/km/car_captured_at", None)
         return
 
     if previous is not None and current < previous:
         LOG.warning("Ignoring decreasing odometer value %s km, keeping %s km", current, previous)
         values["odometer/km"] = int(previous) if previous.is_integer() else previous
+        if previous_captured_at:
+            values["odometer/km/car_captured_at"] = previous_captured_at
+        else:
+            values.pop("odometer/km/car_captured_at", None)
         return
 
     state["last_odometer_km"] = int(current) if current.is_integer() else current
+    if isinstance(current_captured_at, str) and current_captured_at:
+        state["last_odometer_car_captured_at"] = current_captured_at
 
 
-async def _select_vehicle_and_identifier(client: EudaApiClient, config: ServiceConfig) -> tuple[str, str]:
-    vin = config.vin
+async def _select_vehicle_and_identifier(
+    client: EudaApiClient,
+    config: ServiceConfig,
+    state: dict | None = None,
+) -> tuple[str, str]:
+    state = state or {}
+    state_vin = state.get("vin") if isinstance(state.get("vin"), str) else None
+    state_identifier = state.get("identifier") if isinstance(state.get("identifier"), str) else None
+
+    vin = config.vin or state_vin
     if not vin:
         vehicles = await client.async_list_vehicles()
         if not vehicles:
@@ -349,6 +432,8 @@ async def _select_vehicle_and_identifier(client: EudaApiClient, config: ServiceC
         vin = vehicles[0]["vin"]
 
     identifier = config.identifier
+    if not identifier and state_vin == vin:
+        identifier = state_identifier
     if not identifier:
         metadata = await client.async_get_metadata(vin)
         identifier = metadata.get("Identifier")
@@ -367,7 +452,7 @@ async def poll_once(config: ServiceConfig, config_path: Path, dry_run: bool = Fa
 
     async with aiohttp.ClientSession(cookie_jar=aiohttp.CookieJar()) as session:
         client = EudaApiClient(session, config.portal)
-        vin, identifier = await _select_vehicle_and_identifier(client, config)
+        vin, identifier = await _select_vehicle_and_identifier(client, config, state)
         try:
             listing = await _list_datasets_with_retries(client, vin, identifier)
         except ApiError as err:
@@ -410,9 +495,13 @@ async def poll_once(config: ServiceConfig, config_path: Path, dry_run: bool = Fa
             publish_status(config, vin, connected=True, car_captured_at=state_car_captured_at, dry_run=dry_run)
             return _next_sleep(listing, config.poll_interval_seconds, config.retry_interval_seconds)
 
-        payload = await client.async_download_dataset(vin, identifier, name)
-        dataset = Dataset.from_json(payload)
-        publish_dataset(config, vin, name, dataset, payload, state=state, dry_run=dry_run)
+        download = await client.async_download_dataset(vin, identifier, name)
+        if config.save_original_data and not dry_run:
+            save_original_dataset(config, config_path, download)
+        elif config.save_original_data:
+            LOG.info("Dry-run enabled; not saving original dataset ZIP %s", name)
+        dataset = Dataset.from_json(download.payload)
+        publish_dataset(config, vin, name, dataset, download.payload, download=download, state=state, dry_run=dry_run)
 
         now = datetime.now(timezone.utc)
         state.update(
@@ -437,6 +526,7 @@ def publish_dataset(
     dataset: Dataset,
     raw_payload: dict,
     *,
+    download: DatasetDownload | None = None,
     state: dict | None = None,
     dry_run: bool = False,
 ) -> None:
@@ -452,7 +542,6 @@ def publish_dataset(
         "status/captured_at": dataset.captured_at.isoformat() if dataset.captured_at else "",
         "status/car_captured_at": dataset.captured_at.isoformat() if dataset.captured_at else "",
         "status/last_success_at": now.isoformat(),
-        "json": raw_payload,
     }
     values.update(
         {
@@ -461,16 +550,21 @@ def publish_dataset(
         }
     )
     values.update(curated_values(dataset))
+    values.update(curated_capture_values(dataset))
     if state is not None:
         _stabilize_odometer(values, state)
     if config.mqtt.publish_raw:
-        values.update(raw_values(dataset))
+        values.update(structured_values(dataset))
+        if download is not None:
+            values.update(raw_file_values(download))
+    if config.mqtt.publish_history:
+        values["history/batch/json"] = history_batch(dataset, dataset_name)
 
     with MqttPublisher(config.mqtt, dry_run=dry_run) as publisher:
         if config.mqtt.publish_homeassistant_discovery:
             publish_homeassistant_discovery(publisher, config.mqtt, vin)
         for topic, value in sorted(values.items()):
-            publisher.publish(f"{base}/{topic}", value)
+            publisher.publish(f"{base}/{topic}", value, retain=_retain_for_topic(config.mqtt, topic, value))
         if config.mqtt.publish_carcompat:
             publish_carcompat(publisher, config.mqtt, vin, values)
 
@@ -763,14 +857,14 @@ def publish_homeassistant_discovery(
     for entity in HOMEASSISTANT_SENSOR_ENTITIES:
         payload = _homeassistant_base_payload(mqtt_config, vin, entity)
         topic = f"{prefix}/sensor/{node_id}/{entity['key']}/config"
-        publisher.publish(topic, payload)
+        publisher.publish(topic, payload, retain=mqtt_config.homeassistant_discovery_retain)
 
     for entity in HOMEASSISTANT_BINARY_SENSOR_ENTITIES:
         payload = _homeassistant_base_payload(mqtt_config, vin, entity)
         payload["payload_on"] = "true"
         payload["payload_off"] = "false"
         topic = f"{prefix}/binary_sensor/{node_id}/{entity['key']}/config"
-        publisher.publish(topic, payload)
+        publisher.publish(topic, payload, retain=mqtt_config.homeassistant_discovery_retain)
 
 
 async def run_service(config: ServiceConfig, config_path: Path, once: bool, dry_run: bool) -> None:
@@ -851,6 +945,7 @@ async def run_diagnose(config: ServiceConfig, config_path: Path, dry_run: bool =
     assert config.mqtt is not None
     selected_vin: str | None = None
     selected_identifier: str | None = None
+    state = _load_state(_state_path(config_path, config.state_file))
     print("Configuration: ok")
     print(f"Brand: {config.brand.upper()} / locale {config.country}-{config.language}")
     print(f"Configured VIN: {_mask_identifier(config.vin)}")
@@ -864,7 +959,7 @@ async def run_diagnose(config: ServiceConfig, config_path: Path, dry_run: bool =
             client = EudaApiClient(session, config.portal)
             await client.async_login()
             print("Portal login: ok")
-            selected_vin, selected_identifier = await _select_vehicle_and_identifier(client, config)
+            selected_vin, selected_identifier = await _select_vehicle_and_identifier(client, config, state)
             print(f"Vehicle: {_mask_identifier(selected_vin)}")
             print(f"Continuous-data identifier: {_mask_identifier(selected_identifier)}")
             listing = await _list_datasets_with_retries(client, selected_vin, selected_identifier)

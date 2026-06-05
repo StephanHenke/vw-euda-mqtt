@@ -9,11 +9,13 @@ import io
 import json
 import logging
 import re
+import hashlib
 import uuid
 import zipfile
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from urllib.parse import parse_qs, urlencode, urljoin, urlparse
+from xml.etree import ElementTree
 
 import aiohttp
 
@@ -58,6 +60,23 @@ class PortalConfig:
     @property
     def oidc_state(self) -> str:
         return f"{self.country}__{self.language}__{self.brand}"
+
+
+@dataclass(frozen=True)
+class DatasetFile:
+    name: str
+    media_type: str
+    content: str
+    sha256: str
+    xml_json: dict | None = None
+
+
+@dataclass(frozen=True)
+class DatasetDownload:
+    name: str
+    payload: dict
+    files: list[DatasetFile]
+    raw: bytes = b""
 
 
 class _FormParser(HTMLParser):
@@ -521,7 +540,7 @@ class EudaApiClient:
         data = await self._get_json(url, headers={"type": "partial"})
         return data if isinstance(data, list) else data.get("files", [])
 
-    async def async_download_dataset(self, vin: str, identifier: str, name: str) -> dict:
+    async def async_download_dataset(self, vin: str, identifier: str, name: str) -> DatasetDownload:
         await self.async_ensure_login()
         if name.endswith(NO_CONTENT_SUFFIX):
             raise ApiError(f"{name} contains no content")
@@ -542,16 +561,71 @@ class EudaApiClient:
                     raw = await resp.read()
         except aiohttp.ClientError as err:
             raise ApiError(f"Connection error downloading {name}: {err}") from err
-        return self._unzip_json(raw, name)
+        return self._unzip_dataset(raw, name)
 
     @staticmethod
     def _unzip_json(raw: bytes, name: str) -> dict:
+        return EudaApiClient._unzip_dataset(raw, name).payload
+
+    @staticmethod
+    def _unzip_dataset(raw: bytes, name: str) -> DatasetDownload:
         try:
             with zipfile.ZipFile(io.BytesIO(raw)) as zf:
-                members = [item for item in zf.namelist() if item.lower().endswith(".json")]
-                if not members:
+                payload: dict | None = None
+                files: list[DatasetFile] = []
+                for item in zf.infolist():
+                    if item.is_dir():
+                        continue
+                    raw_content = zf.read(item)
+                    content = raw_content.decode("utf-8-sig", errors="replace")
+                    if item.filename.lower().endswith(".json") and payload is None:
+                        payload = json.loads(content)
+                    files.append(
+                        DatasetFile(
+                            name=item.filename,
+                            media_type=_media_type_for_name(item.filename),
+                            content=content,
+                            sha256=hashlib.sha256(raw_content).hexdigest(),
+                            xml_json=_xml_to_json(content) if item.filename.lower().endswith(".xml") else None,
+                        )
+                    )
+                if payload is None:
                     raise ApiError(f"No JSON inside {name}")
-                with zf.open(members[0]) as file:
-                    return json.loads(file.read().decode("utf-8"))
+                return DatasetDownload(name=name, payload=payload, files=files, raw=raw)
         except (zipfile.BadZipFile, ValueError) as err:
             raise ApiError(f"Could not read {name}: {err}") from err
+
+
+def _media_type_for_name(name: str) -> str:
+    lower = name.lower()
+    if lower.endswith(".json"):
+        return "application/json"
+    if lower.endswith(".xml"):
+        return "application/xml"
+    if lower.endswith(".txt"):
+        return "text/plain"
+    return "application/octet-stream"
+
+
+def _xml_to_json(content: str) -> dict | None:
+    try:
+        return _xml_element_to_json(ElementTree.fromstring(content))
+    except ElementTree.ParseError:
+        return None
+
+
+def _xml_element_to_json(element: ElementTree.Element) -> dict:
+    children = [_xml_element_to_json(child) for child in list(element)]
+    result: dict[str, object] = {"tag": _strip_xml_namespace(element.tag)}
+    if element.attrib:
+        result["attributes"] = dict(element.attrib)
+    text = (element.text or "").strip()
+    if text:
+        result["text"] = text
+    if children:
+        result["children"] = children
+    return result
+
+
+def _strip_xml_namespace(tag: str) -> str:
+    return tag.rsplit("}", 1)[-1] if tag.startswith("{") else tag

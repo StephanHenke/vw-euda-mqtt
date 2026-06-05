@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
@@ -72,6 +71,8 @@ class DataPoint:
     key: str
     field_name: str
     raw_value: str
+    group_index: int | None = None
+    car_captured_at: datetime | None = None
 
     @property
     def value(self):
@@ -79,16 +80,46 @@ class DataPoint:
 
 
 @dataclass
+class DataGroup:
+    index: int
+    captured_at: datetime | None
+    points: list[DataPoint] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class DataCatalogEntry:
+    name: str
+    unit: str = ""
+    description: str = ""
+    data_type: str = ""
+    cluster: str = ""
+
+
+@dataclass
 class Dataset:
     vin: str
     user_id: str | None
     points: dict[str, DataPoint] = field(default_factory=dict)
+    groups: list[DataGroup] = field(default_factory=list)
     captured_at: datetime | None = None
 
     @classmethod
     def from_json(cls, payload: dict) -> "Dataset":
         points: dict[str, DataPoint] = {}
-        captured: list[datetime] = []
+        groups: list[DataGroup] = []
+        pending_group: list[DataPoint] = []
+
+        def close_group(captured_at: datetime | None) -> None:
+            if not pending_group:
+                return
+            group_index = len(groups)
+            group_points = list(pending_group)
+            for point in group_points:
+                point.group_index = group_index
+                point.car_captured_at = captured_at
+            groups.append(DataGroup(index=group_index, captured_at=captured_at, points=group_points))
+            pending_group.clear()
+
         for item in payload.get("Data", []):
             key = item.get("key")
             if not key:
@@ -100,20 +131,38 @@ class Dataset:
                 raw_value=item.get("value", ""),
             )
             points[key] = datapoint
+            pending_group.append(datapoint)
             if field_name == "car_captured_time":
                 timestamp = parse_timestamp(datapoint.raw_value)
-                if timestamp:
-                    captured.append(timestamp)
+                close_group(timestamp)
+
+        if pending_group and groups:
+            last_group = groups[-1]
+            for point in list(pending_group):
+                point.group_index = last_group.index
+                point.car_captured_at = last_group.captured_at
+                last_group.points.append(point)
+            pending_group.clear()
+        else:
+            close_group(None)
+        captured = [group.captured_at for group in groups if group.captured_at is not None]
         return cls(
             vin=payload.get("vin", ""),
             user_id=payload.get("user_id"),
             points=points,
+            groups=groups,
             captured_at=max(captured) if captured else None,
         )
 
     def by_field(self, field_name: str) -> DataPoint | None:
         matches = [point for point in self.points.values() if point.field_name == field_name]
-        return min(matches, key=lambda point: point.key) if matches else None
+        if not matches:
+            return None
+        latest_capture = max((point.car_captured_at for point in matches if point.car_captured_at), default=None)
+        if latest_capture is not None:
+            latest_matches = [point for point in matches if point.car_captured_at == latest_capture]
+            return min(latest_matches, key=lambda point: point.key)
+        return min(matches, key=lambda point: point.key)
 
 
 CURATED_TOPIC_FIELDS: dict[str, tuple[str, str | None]] = {
@@ -137,6 +186,127 @@ CURATED_TOPIC_FIELDS: dict[str, tuple[str, str | None]] = {
 }
 
 
+DATA_CATALOG_BY_FIELD: dict[str, DataCatalogEntry] = {
+    "battery_state_report.soc": DataCatalogEntry(
+        name="soc",
+        unit="%",
+        description="Battery state of charge.",
+        data_type="int",
+        cluster="Charging",
+    ),
+    "settings.target_soc": DataCatalogEntry(
+        name="target_soc",
+        unit="%",
+        description="Configured charging target state of charge.",
+        data_type="int",
+        cluster="Charging",
+    ),
+    "battery_state_report.charge_bulk_threshold": DataCatalogEntry(
+        name="charge_bulk_threshold",
+        unit="%",
+        description="Configured bulk charging threshold.",
+        data_type="int",
+        cluster="Charging",
+    ),
+    "battery_state_report.charge_power": DataCatalogEntry(
+        name="charge_power",
+        unit="kW",
+        description="Reported charging power.",
+        data_type="number",
+        cluster="Charging",
+    ),
+    "mileage.value": DataCatalogEntry(
+        name="odometer",
+        unit="km",
+        description="Vehicle odometer value.",
+        data_type="number",
+        cluster="Vehicle Status",
+    ),
+    "range": DataCatalogEntry(
+        name="range",
+        unit="km",
+        description="Reported electric range.",
+        data_type="number",
+        cluster="Vehicle Status",
+    ),
+    "charging_state_report.current_charge_state": DataCatalogEntry(
+        name="charging_state",
+        description="Current charging state.",
+        data_type="string",
+        cluster="Charging",
+    ),
+    "charging_state_report.charge_mode": DataCatalogEntry(
+        name="charge_mode",
+        description="Current charging mode.",
+        data_type="string",
+        cluster="Charging",
+    ),
+    "charging_state_report.charging_scenario": DataCatalogEntry(
+        name="charging_scenario",
+        description="Current charging scenario.",
+        data_type="string",
+        cluster="Charging",
+    ),
+    "charging_state_report.immediate_action_state": DataCatalogEntry(
+        name="immediate_action",
+        description="Immediate charging action state.",
+        data_type="string",
+        cluster="Charging",
+    ),
+    "settings.charge_mode_selection": DataCatalogEntry(
+        name="mode_selection",
+        description="Selected charging mode setting.",
+        data_type="string",
+        cluster="Charging",
+    ),
+    "settings.max_charge_current_ac": DataCatalogEntry(
+        name="max_current",
+        description="Maximum AC charging current setting.",
+        data_type="string",
+        cluster="Charging",
+    ),
+    "locked": DataCatalogEntry(
+        name="locked",
+        description="Vehicle lock state.",
+        data_type="boolean",
+        cluster="Vehicle Status",
+    ),
+    "parking_brake": DataCatalogEntry(
+        name="parking_brake",
+        description="Parking brake state.",
+        data_type="boolean",
+        cluster="Parking Data",
+    ),
+    "min_temperature": DataCatalogEntry(
+        name="min_temperature",
+        unit="C",
+        description="Minimum reported battery temperature.",
+        data_type="number",
+        cluster="Charging",
+    ),
+    "max_temperature": DataCatalogEntry(
+        name="max_temperature",
+        unit="C",
+        description="Maximum reported battery temperature.",
+        data_type="number",
+        cluster="Charging",
+    ),
+    "remaining_climate_time": DataCatalogEntry(
+        name="remaining_climate_time",
+        unit="s",
+        description="Remaining climate runtime.",
+        data_type="number",
+        cluster="Climate",
+    ),
+    "car_captured_time": DataCatalogEntry(
+        name="car_captured_time",
+        description="Vehicle-side capture timestamp assigned to the surrounding datapoint group.",
+        data_type="timestamp",
+        cluster="Metadata",
+    ),
+}
+
+
 def curated_values(dataset: Dataset) -> dict[str, Any]:
     values: dict[str, Any] = {}
     for field_name, (topic, _unit) in CURATED_TOPIC_FIELDS.items():
@@ -146,31 +316,150 @@ def curated_values(dataset: Dataset) -> dict[str, Any]:
     return values
 
 
-def raw_values(dataset: Dataset) -> dict[str, Any]:
+def curated_capture_values(dataset: Dataset) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for field_name, (topic, _unit) in CURATED_TOPIC_FIELDS.items():
+        point = dataset.by_field(field_name)
+        if point is not None and point.car_captured_at is not None:
+            values[f"{topic}/car_captured_at"] = point.car_captured_at.isoformat()
+    return values
+
+
+def data_catalog_entry(point: DataPoint) -> DataCatalogEntry:
+    if point.key in DATA_CATALOG_BY_FIELD:
+        return DATA_CATALOG_BY_FIELD[point.key]
+    if point.field_name in DATA_CATALOG_BY_FIELD:
+        return DATA_CATALOG_BY_FIELD[point.field_name]
+    return DataCatalogEntry(name=point.field_name)
+
+
+def datapoint_json(point: DataPoint) -> dict[str, Any]:
+    entry = data_catalog_entry(point)
+    car_captured_at = point.car_captured_at.isoformat() if point.car_captured_at else ""
+    return {
+        "id": topic_safe(point.key),
+        "key": point.key,
+        "field_name": point.field_name,
+        "name": entry.name or point.field_name,
+        "value": point.value,
+        "raw_value": point.raw_value,
+        "unit": entry.unit,
+        "description": entry.description,
+        "data_type": entry.data_type,
+        "cluster": entry.cluster,
+        "group_index": point.group_index if point.group_index is not None else None,
+        "car_captured_at": car_captured_at,
+    }
+
+
+def structured_values(dataset: Dataset) -> dict[str, Any]:
     values: dict[str, Any] = {}
     points = list(dataset.points.values())
-    field_counts = Counter(point.field_name for point in points)
-    field_topics = _unique_topic_segments([point.field_name for point in points])
     key_topics = _unique_topic_segments([point.key for point in points])
-    topic_index: dict[str, dict[str, str]] = {}
+    point_metadata = [(point, datapoint_json(point)) for point in points]
+    name_topics = _unique_topic_segments([metadata["name"] for _point, metadata in point_metadata])
+    by_name: dict[str, list[tuple[DataPoint, dict[str, Any], str]]] = {}
 
-    for point in points:
-        field_topic = field_topics[point.field_name]
+    def add_datapoint_tree(prefix: str, metadata: dict[str, Any]) -> None:
+        values[f"{prefix}/value"] = metadata["value"]
+        values[f"{prefix}/name"] = metadata["name"]
+        values[f"{prefix}/key"] = metadata["key"]
+        values[f"{prefix}/unit"] = metadata["unit"]
+        values[f"{prefix}/description"] = metadata["description"]
+        values[f"{prefix}/field_name"] = metadata["field_name"]
+        values[f"{prefix}/data_type"] = metadata["data_type"]
+        values[f"{prefix}/cluster"] = metadata["cluster"]
+        values[f"{prefix}/group_index"] = metadata["group_index"] if metadata["group_index"] is not None else ""
+        values[f"{prefix}/car_captured_at"] = metadata["car_captured_at"]
+        values[f"{prefix}/json"] = metadata
+
+    for point, metadata in point_metadata:
         key_topic = key_topics[point.key]
-        value = point.value
-        by_key_topic = f"raw/by_key/{key_topic}"
-        by_field_topic = f"raw/by_field/{field_topic}/{key_topic}"
-
-        values[by_key_topic] = value
-        values[by_field_topic] = value
-        topic_index[point.key] = {
-            "field_name": point.field_name,
-            "by_key_topic": by_key_topic,
-            "by_field_topic": by_field_topic,
+        name_topic = name_topics[metadata["name"]]
+        by_key_prefix = f"structured/by_key/{key_topic}"
+        by_name_prefix = f"structured/by_name/{name_topic}"
+        metadata["topics"] = {
+            "by_key": by_key_prefix,
+            "by_name": by_name_prefix,
         }
+        add_datapoint_tree(by_key_prefix, metadata)
+        by_name.setdefault(name_topic, []).append((point, metadata, key_topic))
 
-        if field_counts[point.field_name] == 1:
-            values[f"raw/{field_topic}"] = value
+    for name_topic, items in by_name.items():
+        sorted_items = sorted(items, key=lambda item: _datapoint_sort_key(item[0]), reverse=True)
+        _latest_point, latest_metadata, _latest_key_topic = sorted_items[0]
+        add_datapoint_tree(f"structured/by_name/{name_topic}", latest_metadata)
+        values[f"structured/by_name/{name_topic}/keys"] = [
+            {
+                "key": metadata["key"],
+                "car_captured_at": metadata["car_captured_at"],
+            }
+            for _point, metadata, _key_topic in sorted_items
+        ]
 
-    values["raw/_topic_index"] = topic_index
     return values
+
+
+def raw_file_values(download: Any) -> dict[str, Any]:
+    values: dict[str, Any] = {}
+    files = list(getattr(download, "files", []) or [])
+    for index, file in enumerate(files):
+        prefix = f"raw/file/{index}"
+        values[f"{prefix}/filename"] = file.name
+        values[f"{prefix}/content"] = file.content
+    return values
+
+
+def history_batch(dataset: Dataset, dataset_name: str) -> dict[str, Any]:
+    eligible_points = [
+        point
+        for group in dataset.groups
+        for point in group.points
+        if point.field_name != "car_captured_time" and point.car_captured_at is not None
+    ]
+    point_metadata = [(point, datapoint_json(point)) for point in eligible_points]
+    key_topics = _unique_topic_segments([point.key for point in eligible_points])
+    name_topics = _unique_topic_segments([metadata["name"] for _point, metadata in point_metadata])
+
+    events: list[dict[str, Any]] = []
+    sorted_items = sorted(point_metadata, key=lambda item: _history_sort_key(item[0]))
+    for sequence, (point, metadata) in enumerate(sorted_items):
+        key_topic = key_topics[point.key]
+        name_topic = name_topics[metadata["name"]]
+        event = {
+            "event_id": f"{topic_safe(dataset_name)}:{metadata['group_index']}:{sequence}:{key_topic}",
+            "dataset": dataset_name,
+            "key": metadata["key"],
+            "field_name": metadata["field_name"],
+            "name": metadata["name"],
+            "value": metadata["value"],
+            "raw_value": metadata["raw_value"],
+            "unit": metadata["unit"],
+            "description": metadata["description"],
+            "data_type": metadata["data_type"],
+            "cluster": metadata["cluster"],
+            "group_index": metadata["group_index"],
+            "car_captured_at": metadata["car_captured_at"],
+            "curated_topic": CURATED_TOPIC_FIELDS.get(point.field_name, ("", None))[0],
+            "structured_by_name_topic": f"structured/by_name/{name_topic}",
+            "structured_by_key_topic": f"structured/by_key/{key_topic}",
+        }
+        events.append(event)
+
+    return {
+        "vin": dataset.vin,
+        "dataset": dataset_name,
+        "event_count": len(events),
+        "events": events,
+    }
+
+
+def _datapoint_sort_key(point: DataPoint) -> tuple[datetime, str]:
+    captured_at = point.car_captured_at or datetime.min.replace(tzinfo=timezone.utc)
+    return captured_at, point.key
+
+
+def _history_sort_key(point: DataPoint) -> tuple[datetime, int]:
+    captured_at = point.car_captured_at or datetime.min.replace(tzinfo=timezone.utc)
+    group_index = point.group_index if point.group_index is not None else -1
+    return captured_at, group_index

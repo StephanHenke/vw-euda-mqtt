@@ -20,4 +20,5 @@ Thing mqtt:topic:vw_euda_vehicle "VW Group Vehicle2MQTT" (mqtt:broker:local) [
         Type string   : service_version    "Service Version"   [ stateTopic="vw/euda/TESTVIN1234567890/status/service_version" ]
         Type string   : error_type         "Error Type"        [ stateTopic="vw/euda/TESTVIN1234567890/status/error_type" ]
         Type string   : error              "Error"             [ stateTopic="vw/euda/TESTVIN1234567890/status/error" ]
+        Type string   : history_batch_json "History Batch JSON" [ stateTopic="vw/euda/TESTVIN1234567890/history/batch/json" ]
 }

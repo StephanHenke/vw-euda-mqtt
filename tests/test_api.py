@@ -188,6 +188,28 @@ class PayloadExtractionTests(unittest.TestCase):
         raw = _zip_bytes({"data.json": {"ok": True}, "readme.txt": "ignored"})
         self.assertEqual(EudaApiClient._unzip_json(raw, "dataset.zip"), {"ok": True})
 
+    def test_unzip_dataset_returns_json_payload_and_raw_members(self) -> None:
+        raw = _zip_bytes(
+            {
+                "data.json": {"ok": True},
+                "reports/vehicle.xml": "<vehicle><soc>52</soc></vehicle>",
+                "readme.txt": "ignored",
+            }
+        )
+
+        download = EudaApiClient._unzip_dataset(raw, "dataset.zip")
+
+        self.assertEqual(download.name, "dataset.zip")
+        self.assertEqual(download.payload, {"ok": True})
+        self.assertEqual(download.raw, raw)
+        files = {file.name: file for file in download.files}
+        self.assertEqual(files["data.json"].media_type, "application/json")
+        self.assertEqual(files["reports/vehicle.xml"].media_type, "application/xml")
+        self.assertEqual(files["reports/vehicle.xml"].content, "<vehicle><soc>52</soc></vehicle>")
+        self.assertEqual(files["reports/vehicle.xml"].xml_json["children"][0]["tag"], "soc")
+        self.assertEqual(files["reports/vehicle.xml"].xml_json["children"][0]["text"], "52")
+        self.assertEqual(len(files["reports/vehicle.xml"].sha256), 64)
+
     def test_unzip_json_raises_for_missing_json_or_invalid_zip(self) -> None:
         with self.assertRaises(ApiError):
             EudaApiClient._unzip_json(_zip_bytes({"readme.txt": "ignored"}), "dataset.zip")

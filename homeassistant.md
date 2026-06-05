@@ -10,7 +10,8 @@ Die Umsetzung orientiert sich an der offiziellen Home-Assistant-MQTT-Discovery:
 Discovery-Topics liegen standardmäßig unter `homeassistant/.../config`, die
 Payloads enthalten `unique_id`, `state_topic`, Device-Informationen und
 Availability-Informationen. Die Discovery-Payloads werden retained publiziert,
-wenn `mqtt.retain` aktiv ist.
+wenn `mqtt.homeassistant_discovery_retain` aktiv ist. Dieser Schalter ist
+standardmäßig `true`, sobald Discovery überhaupt aktiviert wird.
 
 ## Voraussetzungen
 
@@ -18,8 +19,11 @@ wenn `mqtt.retain` aktiv ist.
 - MQTT Discovery ist in Home Assistant aktiviert. Standardmäßig nutzt Home
   Assistant den Discovery-Prefix `homeassistant`.
 - `vwgroup-vehicle2mqtt` und Home Assistant nutzen denselben MQTT-Broker.
-- `mqtt.retain` sollte `true` bleiben, damit Home Assistant die Discovery- und
-  State-Nachrichten nach einem Neustart sofort wieder bekommt.
+- `mqtt.homeassistant_discovery_retain` sollte `true` bleiben, damit Home
+  Assistant die Discovery-Konfiguration nach einem Neustart sofort wieder
+  bekommt.
+- `mqtt.retain` kann trotzdem `false` bleiben, wenn Fahrzeugwerte nicht retained
+  im Broker liegen sollen.
 
 ## Konfiguration
 
@@ -30,9 +34,10 @@ In `config.json` im MQTT-Block aktivieren:
   "mqtt": {
     "host": "mqtt.example.local",
     "base_topic": "vw/euda",
-    "retain": true,
+    "retain": false,
     "publish_homeassistant_discovery": true,
-    "homeassistant_discovery_prefix": "homeassistant"
+    "homeassistant_discovery_prefix": "homeassistant",
+    "homeassistant_discovery_retain": true
   }
 }
 ```
@@ -87,6 +92,14 @@ Alle Entities verwenden:
 - `availability` über `vw/euda/<vin>/status/online`
 - ein gemeinsames Gerät `VW Group Vehicle2MQTT <letzte 6 VIN-Zeichen>`
 
+## Historische Werte
+
+Home Assistant speichert MQTT-State-Updates im Recorder mit dem Zeitpunkt, an
+dem Home Assistant die Nachricht verarbeitet. `car_captured_at` bleibt als
+Fahrzeugzeitpunkt sichtbar, setzt aber nicht den Recorder-Zeitstempel. Für echte
+rückdatierte historische Werte ist MQTT Discovery deshalb nicht der passende
+Weg. Details und der openHAB-Backfill-Weg stehen in [history.md](history.md).
+
 ## Troubleshooting
 
 Wenn in Home Assistant keine Entities erscheinen:
@@ -118,9 +131,10 @@ Enable it in the MQTT section of `config.json`:
   "mqtt": {
     "host": "mqtt.example.local",
     "base_topic": "vw/euda",
-    "retain": true,
+    "retain": false,
     "publish_homeassistant_discovery": true,
-    "homeassistant_discovery_prefix": "homeassistant"
+    "homeassistant_discovery_prefix": "homeassistant",
+    "homeassistant_discovery_retain": true
   }
 }
 ```
@@ -130,7 +144,9 @@ Requirements:
 - Home Assistant MQTT integration is configured.
 - MQTT discovery is enabled.
 - Home Assistant and `vwgroup-vehicle2mqtt` use the same broker.
-- Keep `mqtt.retain` enabled for reliable discovery and startup restore.
+- Keep `mqtt.homeassistant_discovery_retain=true` for reliable discovery after
+  Home Assistant restarts.
+- `mqtt.retain` can stay `false` when vehicle state should not be retained.
 
 Discovery configs are published below:
 
@@ -141,6 +157,11 @@ homeassistant/binary_sensor/vw_euda_<vin>/<object_id>/config
 
 The generated entities share one Home Assistant device and use
 `vw/euda/<vin>/status/online` as availability topic.
+
+MQTT state updates are recorded with the Home Assistant receive time. The
+vehicle-side `car_captured_at` timestamp is visible as data, but it does not
+backdate Recorder history. See [history.md](history.md) for the history
+backfill approach.
 
 Official reference:
 
