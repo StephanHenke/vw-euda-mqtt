@@ -124,9 +124,16 @@ def _extract_csrf(html: str) -> str | None:
 
 def _safe_url_for_log(url: str) -> str:
     parsed = urlparse(url)
+    path = _redact_sensitive_path_parts(parsed.path)
     if parsed.scheme and parsed.netloc:
-        return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
-    return parsed.path or url
+        return f"{parsed.scheme}://{parsed.netloc}{path}"
+    return path or url
+
+
+def _redact_sensitive_path_parts(path: str) -> str:
+    path = re.sub(r"(/datadelivery/vehicles/)[^/]+/[^/]+", r"\1<redacted>/<redacted>", path)
+    path = re.sub(r"(/datarequest/vehicles/)[^/]+", r"\1<redacted>", path)
+    return re.sub(r"(/relations/)[^/]+", r"\1<redacted>", path)
 
 
 def _login_fields(html: str) -> tuple[dict[str, str], str | None]:
@@ -469,14 +476,14 @@ class EudaApiClient:
                     await self.async_login()
                     return await self._get_json(url, headers=headers, _retry=False)
                 if resp.status >= 400:
-                    raise ApiError(f"GET {url} -> HTTP {resp.status}")
+                    raise ApiError(f"GET {_safe_url_for_log(url)} -> HTTP {resp.status}")
                 text = await resp.text()
         except aiohttp.ClientError as err:
-            raise ApiError(f"Connection error for {url}: {err}") from err
+            raise ApiError(f"Connection error for {_safe_url_for_log(url)}: {err}") from err
         try:
             return json.loads(text)
         except ValueError as err:
-            raise ApiError(f"Invalid JSON from {url}: {err}") from err
+            raise ApiError(f"Invalid JSON from {_safe_url_for_log(url)}: {err}") from err
 
     async def async_ensure_login(self) -> None:
         if not self._logged_in:

@@ -2,7 +2,7 @@
 
 ## Deutsch
 
-`vw-euda-mqtt` kann Home-Assistant-kompatible MQTT-Discovery-Nachrichten
+`vwgroup-vehicle2mqtt` kann Home-Assistant-kompatible MQTT-Discovery-Nachrichten
 veröffentlichen. Home Assistant legt die Sensoren dann automatisch unter einem
 gemeinsamen Gerät an.
 
@@ -17,7 +17,7 @@ wenn `mqtt.retain` aktiv ist.
 - Home Assistant mit eingerichteter MQTT-Integration.
 - MQTT Discovery ist in Home Assistant aktiviert. Standardmäßig nutzt Home
   Assistant den Discovery-Prefix `homeassistant`.
-- `vw-euda-mqtt` und Home Assistant nutzen denselben MQTT-Broker.
+- `vwgroup-vehicle2mqtt` und Home Assistant nutzen denselben MQTT-Broker.
 - `mqtt.retain` sollte `true` bleiben, damit Home Assistant die Discovery- und
   State-Nachrichten nach einem Neustart sofort wieder bekommt.
 
@@ -47,13 +47,13 @@ Danach den Dienst neu starten oder einmalig ausführen:
 
 ```bash
 docker compose up -d
-docker logs -f vw-euda-mqtt
+docker logs -f vwgroup-vehicle2mqtt
 ```
 
 oder lokal:
 
 ```bash
-uv run vw-euda-mqtt --config config.json --once
+uv run vwgroup-vehicle2mqtt --config config.json --once
 ```
 
 ## Was veröffentlicht wird
@@ -85,7 +85,7 @@ Alle Entities verwenden:
 - `unique_id` im Muster `vw_euda_<vin>_<object>`
 - `state_topic` unter `vw/euda/<vin>/...`
 - `availability` über `vw/euda/<vin>/status/online`
-- ein gemeinsames Gerät `VW EU Data Act <letzte 6 VIN-Zeichen>`
+- ein gemeinsames Gerät `VW Group Vehicle2MQTT <letzte 6 VIN-Zeichen>`
 
 ## Troubleshooting
 
@@ -94,7 +94,7 @@ Wenn in Home Assistant keine Entities erscheinen:
 1. Prüfen, ob Home Assistant MQTT eingerichtet hat.
 2. Prüfen, ob Discovery aktiv ist und der Prefix zu
    `homeassistant_discovery_prefix` passt.
-3. Prüfen, ob `vw-euda-mqtt` mindestens einmal ein echtes Dataset publiziert
+3. Prüfen, ob `vwgroup-vehicle2mqtt` mindestens einmal ein echtes Dataset publiziert
    hat. Discovery wird bei erfolgreichem Dataset-Publish gesendet.
 4. MQTT retained Config prüfen:
 
@@ -107,7 +107,7 @@ mosquitto_sub -h mqtt.example.local -v -t 'homeassistant/#'
 
 ## English
 
-`vw-euda-mqtt` can publish Home Assistant compatible MQTT discovery messages.
+`vwgroup-vehicle2mqtt` can publish Home Assistant compatible MQTT discovery messages.
 Home Assistant can then create the vehicle sensors automatically as one shared
 device.
 
@@ -129,7 +129,7 @@ Requirements:
 
 - Home Assistant MQTT integration is configured.
 - MQTT discovery is enabled.
-- Home Assistant and `vw-euda-mqtt` use the same broker.
+- Home Assistant and `vwgroup-vehicle2mqtt` use the same broker.
 - Keep `mqtt.retain` enabled for reliable discovery and startup restore.
 
 Discovery configs are published below:

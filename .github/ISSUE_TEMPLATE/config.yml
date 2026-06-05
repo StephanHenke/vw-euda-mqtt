@@ -1,5 +1,5 @@
 blank_issues_enabled: false
 contact_links:
   - name: Security and private data handling
-    url: https://github.com/StephanHenke/vw-euda-mqtt/blob/main/SECURITY.md
+    url: https://github.com/StephanHenke/vwgroup-vehicle2mqtt/blob/main/SECURITY.md
     about: Read this before sharing logs, datasets, VINs, credentials, or security-sensitive details.

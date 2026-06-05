@@ -1,8 +1,8 @@
-# VW EU Data Act MQTT Service
+# VW Group Vehicle2MQTT
 
-[![Tests](https://github.com/StephanHenke/vw-euda-mqtt/actions/workflows/tests.yml/badge.svg)](https://github.com/StephanHenke/vw-euda-mqtt/actions/workflows/tests.yml)
-[![Docker Image](https://github.com/StephanHenke/vw-euda-mqtt/actions/workflows/docker-image.yml/badge.svg)](https://github.com/StephanHenke/vw-euda-mqtt/actions/workflows/docker-image.yml)
-[![Docker Pulls](https://img.shields.io/docker/pulls/stephanhenke/vw-euda-mqtt)](https://hub.docker.com/r/stephanhenke/vw-euda-mqtt)
+[![Tests](https://github.com/StephanHenke/vwgroup-vehicle2mqtt/actions/workflows/tests.yml/badge.svg)](https://github.com/StephanHenke/vwgroup-vehicle2mqtt/actions/workflows/tests.yml)
+[![Docker Image](https://github.com/StephanHenke/vwgroup-vehicle2mqtt/actions/workflows/docker-image.yml/badge.svg)](https://github.com/StephanHenke/vwgroup-vehicle2mqtt/actions/workflows/docker-image.yml)
+[![Docker Pulls](https://img.shields.io/docker/pulls/stephanhenke/vwgroup-vehicle2mqtt)](https://hub.docker.com/r/stephanhenke/vwgroup-vehicle2mqtt)
 
 [Deutsch](README.de.md)
 
@@ -10,6 +10,10 @@ This project retrieves vehicle data made available through the Volkswagen Group
 EU Data Act portal and forwards it in a structured form to an MQTT broker. The
 goal is to make these values available to smart home systems, energy management
 systems, and similar local automation platforms.
+
+The former project name was `vw-euda-mqtt`. The new name
+`vwgroup-vehicle2mqtt` describes the scope more broadly: Volkswagen Group
+vehicle data forwarded to MQTT.
 
 The service logs in to `eu-data-act.drivesomethinggreater.com`, follows the
 portal's brand-specific login redirect, downloads the latest continuous-data ZIP
@@ -114,7 +118,9 @@ Important fields:
 - `poll_interval_seconds`: default `900`, matching 15-minute datasets.
 - `mqtt.host`, `mqtt.port`, `mqtt.username`, `mqtt.password`: MQTT broker
   settings.
-- `mqtt.base_topic`: default `vw/euda`.
+- `mqtt.base_topic`: default `vw/euda`. This topic intentionally stays stable
+  for compatibility, even though the service is now named
+  `vwgroup-vehicle2mqtt`.
 - `mqtt.publish_raw`: also publish all raw data fields under `raw/...`.
 - `mqtt.publish_carcompat`: optionally mirror selected values under
   `car/garage/<vin>/...`.
@@ -143,38 +149,38 @@ VW_EUDA_MQTT_PASSWORD
 Run a setup diagnosis without printing secrets:
 
 ```bash
-uv run vw-euda-mqtt --config config.json --diagnose
+uv run vwgroup-vehicle2mqtt --config config.json --diagnose
 ```
 
 Debug once without publishing to MQTT:
 
 ```bash
-uv run vw-euda-mqtt --config config.json --once --dry-run --debug
+uv run vwgroup-vehicle2mqtt --config config.json --once --dry-run --debug
 ```
 
 Run once without MQTT publishing:
 
 ```bash
-uv run vw-euda-mqtt --config config.json --once --dry-run
+uv run vwgroup-vehicle2mqtt --config config.json --once --dry-run
 ```
 
 Run once and publish to MQTT:
 
 ```bash
-uv run vw-euda-mqtt --config config.json --once
+uv run vwgroup-vehicle2mqtt --config config.json --once
 ```
 
 Run continuously:
 
 ```bash
-uv run vw-euda-mqtt --config config.json
+uv run vwgroup-vehicle2mqtt --config config.json
 ```
 
 Check whether the last successful dataset publish is still recent enough for
 container health monitoring:
 
 ```bash
-uv run vw-euda-mqtt --config config.json --healthcheck
+uv run vwgroup-vehicle2mqtt --config config.json --healthcheck
 ```
 
 ## Docker
@@ -182,13 +188,13 @@ uv run vw-euda-mqtt --config config.json --healthcheck
 Prebuilt images are published to Docker Hub and GitHub Container Registry:
 
 ```bash
-docker pull stephanhenke/vw-euda-mqtt:latest
+docker pull stephanhenke/vwgroup-vehicle2mqtt:latest
 ```
 
 The same image is also available from GitHub Container Registry:
 
 ```bash
-docker pull ghcr.io/stephanhenke/vw-euda-mqtt:latest
+docker pull ghcr.io/stephanhenke/vwgroup-vehicle2mqtt:latest
 ```
 
 The GitHub Actions workflow publishes to Docker Hub when the repository secrets
@@ -201,7 +207,7 @@ cp config.example.json config.json
 cp docker-compose.example.yml docker-compose.yml
 mkdir -p data
 docker compose up -d
-docker logs -f vw-euda-mqtt
+docker logs -f vwgroup-vehicle2mqtt
 ```
 
 The published image includes a Docker `HEALTHCHECK`. It reads the configured
@@ -215,7 +221,7 @@ For local development, build the image from this checkout:
 cp config.example.json config.json
 mkdir -p data
 docker compose up -d --build
-docker logs -f vw-euda-mqtt
+docker logs -f vwgroup-vehicle2mqtt
 ```
 
 Rebuild after code changes:
@@ -378,8 +384,10 @@ expired. Run with `--debug` and check whether login lands on `/de/de/user.html`.
 
 `HTTP 500` while listing datasets
 
-Can be a transient portal backend error. The service retries after
-`retry_interval_seconds`.
+Can be a transient portal backend error. The service retries the datadelivery
+list endpoint several times within the same poll using short bounded
+exponential backoff. Only after those attempts fail does it publish
+`PendingData` and retry the full poll after `retry_interval_seconds`.
 
 ## Security Notes
 

@@ -1,4 +1,4 @@
-# Example evcc configuration snippet for vw-euda-mqtt.
+﻿# Example evcc configuration snippet for vwgroup-vehicle2mqtt.
 # Replace the broker, credentials, VIN, capacity, charger, and loadpoint values.
 # If you already have an evcc vehicle, keep its existing `name` to preserve
 # loadpoint assignment and keep `title` stable for a coherent charging history.
@@ -17,15 +17,15 @@ vehicles:
     capacity: 76
     soc:
       source: mqtt
-      topic: vw/euda/WAUZZZ00000000000/battery/soc
+      topic: vw/euda/TESTVIN1234567890/battery/soc
       timeout: 72h
     limitsoc:
       source: mqtt
-      topic: vw/euda/WAUZZZ00000000000/battery/target_soc
+      topic: vw/euda/TESTVIN1234567890/battery/target_soc
       timeout: 72h
     odometer:
       source: mqtt
-      topic: vw/euda/WAUZZZ00000000000/odometer/km
+      topic: vw/euda/TESTVIN1234567890/odometer/km
       timeout: 720h
     features:
       - streaming

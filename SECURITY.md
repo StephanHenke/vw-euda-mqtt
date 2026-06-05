@@ -2,7 +2,7 @@
 
 ## English
 
-`vw-euda-mqtt` logs in to the VW Group EU Data Act portal and can handle account
+`vwgroup-vehicle2mqtt` logs in to the VW Group EU Data Act portal and can handle account
 credentials, MQTT credentials, VINs, dataset payloads, and local runtime state.
 Treat all of those as sensitive.
 
@@ -23,7 +23,7 @@ before publishing details in an issue.
 
 ## Deutsch
 
-`vw-euda-mqtt` meldet sich am VW Group EU Data Act Portal an und kann Konto-
+`vwgroup-vehicle2mqtt` meldet sich am VW Group EU Data Act Portal an und kann Konto-
 Zugangsdaten, MQTT-Zugangsdaten, FIN/VIN, Dataset-Inhalte und lokalen
 Laufzeitstatus verarbeiten. Diese Daten sind als sensibel zu behandeln.
 

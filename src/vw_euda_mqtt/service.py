@@ -1,4 +1,4 @@
-"""Command-line VW EU Data Act to MQTT bridge."""
+"""Command-line VW Group vehicle data to MQTT bridge."""
 
 from __future__ import annotations
 
@@ -23,6 +23,9 @@ from .data import Dataset, curated_values, raw_values, topic_safe
 
 LOG = logging.getLogger(__name__)
 HEALTHCHECK_MISSED_POLLS = 4
+DATASET_LIST_RETRY_ATTEMPTS = 3
+DATASET_LIST_RETRY_BASE_SECONDS = 5
+DATASET_LIST_RETRY_MAX_SECONDS = 30
 
 
 @dataclass(frozen=True)
@@ -31,7 +34,7 @@ class MqttConfig:
     port: int = 1883
     username: str | None = None
     password: str | None = None
-    client_id: str = "vw-euda-mqtt"
+    client_id: str = "vwgroup-vehicle2mqtt"
     base_topic: str = "vw/euda"
     retain: bool = True
     qos: int = 0
@@ -72,7 +75,7 @@ class ServiceConfig:
             port=int(mqtt_raw.get("port", 1883)),
             username=_env_value("VW_EUDA_MQTT_USERNAME") or mqtt_raw.get("username") or None,
             password=_env_value("VW_EUDA_MQTT_PASSWORD") or mqtt_raw.get("password") or None,
-            client_id=mqtt_raw.get("client_id") or "vw-euda-mqtt",
+            client_id=mqtt_raw.get("client_id") or "vwgroup-vehicle2mqtt",
             base_topic=(mqtt_raw.get("base_topic") or "vw/euda").strip("/"),
             retain=bool(mqtt_raw.get("retain", True)),
             qos=int(mqtt_raw.get("qos", 0)),
@@ -261,6 +264,42 @@ def _is_dataset_listing_pending(err: ApiError) -> bool:
     )
 
 
+def _dataset_listing_retry_delay(attempt_index: int) -> int:
+    delay = DATASET_LIST_RETRY_BASE_SECONDS * (2 ** max(0, attempt_index - 1))
+    return min(delay, DATASET_LIST_RETRY_MAX_SECONDS)
+
+
+async def _list_datasets_with_retries(
+    client: EudaApiClient,
+    vin: str,
+    identifier: str,
+    *,
+    sleep=asyncio.sleep,
+) -> list[dict]:
+    last_err: ApiError | None = None
+    for attempt in range(1, DATASET_LIST_RETRY_ATTEMPTS + 1):
+        try:
+            return await client.async_list_datasets(vin, identifier)
+        except ApiError as err:
+            if not _is_dataset_listing_pending(err):
+                raise
+            last_err = err
+            if attempt >= DATASET_LIST_RETRY_ATTEMPTS:
+                break
+            delay = _dataset_listing_retry_delay(attempt)
+            LOG.warning(
+                "Dataset listing failed transiently for identifier %s (attempt %s/%s), retrying in %ss: %s",
+                _mask_identifier(identifier),
+                attempt,
+                DATASET_LIST_RETRY_ATTEMPTS,
+                delay,
+                err,
+            )
+            await sleep(delay)
+    assert last_err is not None
+    raise last_err
+
+
 def _numeric_value(value: Any) -> float | None:
     if isinstance(value, bool) or value is None:
         return None
@@ -330,11 +369,11 @@ async def poll_once(config: ServiceConfig, config_path: Path, dry_run: bool = Fa
         client = EudaApiClient(session, config.portal)
         vin, identifier = await _select_vehicle_and_identifier(client, config)
         try:
-            listing = await client.async_list_datasets(vin, identifier)
+            listing = await _list_datasets_with_retries(client, vin, identifier)
         except ApiError as err:
             if not _is_dataset_listing_pending(err):
                 raise
-            message = f"Dataset listing not available yet for identifier {identifier}: {err}"
+            message = f"Dataset listing not available yet for identifier {_mask_identifier(identifier)}: {err}"
             LOG.warning(message)
             publish_status(
                 config,
@@ -680,9 +719,9 @@ HOMEASSISTANT_BINARY_SENSOR_ENTITIES: tuple[dict[str, Any], ...] = (
 def _homeassistant_device(vin: str) -> dict[str, Any]:
     return {
         "identifiers": [f"vw_euda_{vin}"],
-        "name": f"VW EU Data Act {vin[-6:]}",
+        "name": f"VW Group Vehicle2MQTT {vin[-6:]}",
         "manufacturer": "Volkswagen Group",
-        "model": "EU Data Act Vehicle",
+        "model": "Vehicle2MQTT",
         "sw_version": __version__,
     }
 
@@ -828,7 +867,7 @@ async def run_diagnose(config: ServiceConfig, config_path: Path, dry_run: bool =
             selected_vin, selected_identifier = await _select_vehicle_and_identifier(client, config)
             print(f"Vehicle: {_mask_identifier(selected_vin)}")
             print(f"Continuous-data identifier: {_mask_identifier(selected_identifier)}")
-            listing = await client.async_list_datasets(selected_vin, selected_identifier)
+            listing = await _list_datasets_with_retries(client, selected_vin, selected_identifier)
             content = [entry for entry in listing if entry.get("name") and not entry["name"].endswith(NO_CONTENT_SUFFIX)]
             print(f"Dataset listing: ok ({len(listing)} files, {len(content)} content files)")
     except Exception as err:
@@ -847,7 +886,7 @@ async def run_diagnose(config: ServiceConfig, config_path: Path, dry_run: bool =
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="VW EU Data Act to MQTT bridge")
+    parser = argparse.ArgumentParser(description="VW Group vehicle data to MQTT bridge")
     parser.add_argument("--config", required=True, type=Path, help="Path to config JSON")
     parser.add_argument("--once", action="store_true", help="Run one poll and exit")
     parser.add_argument("--dry-run", action="store_true", help="Print MQTT publishes instead of sending")

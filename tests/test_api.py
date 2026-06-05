@@ -151,6 +151,20 @@ class HtmlParsingTests(unittest.TestCase):
         )
         self.assertEqual(_safe_url_for_log("/local/path?secret=value"), "/local/path")
 
+    def test_safe_url_for_log_redacts_vehicle_identifiers(self) -> None:
+        self.assertEqual(
+            _safe_url_for_log(
+                "https://example.com/proxy_api/euda-apim/datadelivery/vehicles/TESTVIN1234567890/identifier123/list"
+            ),
+            "https://example.com/proxy_api/euda-apim/datadelivery/vehicles/<redacted>/<redacted>/list",
+        )
+        self.assertEqual(
+            _safe_url_for_log(
+                "https://example.com/proxy_api/euda-apim/datarequest/vehicles/TESTVIN1234567890/metadata/partial"
+            ),
+            "https://example.com/proxy_api/euda-apim/datarequest/vehicles/<redacted>/metadata/partial",
+        )
+
 
 class PayloadExtractionTests(unittest.TestCase):
     def test_extract_vins_finds_nested_unique_vehicle_identifiers(self) -> None:

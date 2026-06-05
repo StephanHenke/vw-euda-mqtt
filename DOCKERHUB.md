@@ -1,23 +1,23 @@
-# VW EU Data Act MQTT Service
+# VW Group Vehicle2MQTT
 
-Docker image for `vw-euda-mqtt`, a small bridge that retrieves vehicle datasets
-made available through the Volkswagen Group EU Data Act portal and publishes
-structured values to MQTT.
+Docker image for `vwgroup-vehicle2mqtt`, a small bridge that retrieves vehicle
+datasets made available through the Volkswagen Group EU Data Act portal and
+publishes structured values to MQTT.
 
 Project and source code:
 
-https://github.com/StephanHenke/vw-euda-mqtt
+https://github.com/StephanHenke/vwgroup-vehicle2mqtt
 
 ## Pull
 
 ```bash
-docker pull stephanhenke/vw-euda-mqtt:latest
+docker pull stephanhenke/vwgroup-vehicle2mqtt:latest
 ```
 
 The same image is also available from GitHub Container Registry:
 
 ```bash
-docker pull ghcr.io/stephanhenke/vw-euda-mqtt:latest
+docker pull ghcr.io/stephanhenke/vwgroup-vehicle2mqtt:latest
 ```
 
 ## Purpose
@@ -51,14 +51,14 @@ Create a `config.json` from the example in the GitHub repository, then run:
 docker run --rm \
   -v "$PWD/config.json:/config/config.json:ro" \
   -v "$PWD/data:/config/data" \
-  stephanhenke/vw-euda-mqtt:latest \
+  stephanhenke/vwgroup-vehicle2mqtt:latest \
   --config /config/config.json
 ```
 
 Docker Compose examples and full configuration documentation are maintained in
 the GitHub repository:
 
-https://github.com/StephanHenke/vw-euda-mqtt
+https://github.com/StephanHenke/vwgroup-vehicle2mqtt
 
 ## Diagnostics and Health
 
@@ -69,7 +69,7 @@ configured secrets:
 docker run --rm \
   -v "$PWD/config.json:/config/config.json:ro" \
   -v "$PWD/data:/config/data" \
-  stephanhenke/vw-euda-mqtt:latest \
+  stephanhenke/vwgroup-vehicle2mqtt:latest \
   --config /config/config.json --diagnose
 ```
 
@@ -95,6 +95,7 @@ Published tags include:
 ```text
 latest
 main
+0.2.0
 0.1.3
 0.1.2
 ```
@@ -110,4 +111,4 @@ linux/arm64
 
 MIT License. See the GitHub repository for source code and license details:
 
-https://github.com/StephanHenke/vw-euda-mqtt
+https://github.com/StephanHenke/vwgroup-vehicle2mqtt

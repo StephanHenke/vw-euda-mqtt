@@ -7,6 +7,21 @@ semantic versioning.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-06-05
+
+### Changed
+
+- Rename the public project, Docker image, repository links, and primary CLI
+  command to `vwgroup-vehicle2mqtt`.
+- Keep the old `vw-euda-mqtt` CLI command as a backward-compatible alias.
+- Keep the Python package name `vw_euda_mqtt` and the default MQTT base topic
+  `vw/euda` for compatibility with existing installations and examples.
+- Redact VINs and continuous-data identifiers from API error URLs and
+  `PendingData` status messages.
+- Retry transient datadelivery listing failures (`HTTP 404/500/502/503/504`)
+  within the same poll using bounded exponential backoff before publishing
+  `PendingData`.
+
 ## [0.1.3] - 2026-06-04
 
 ### Added

@@ -1,5 +1,5 @@
 name: Bug report
-description: Report a reproducible problem with vw-euda-mqtt
+description: Report a reproducible problem with vwgroup-vehicle2mqtt
 title: "[Bug]: "
 labels: ["bug"]
 body:
@@ -31,7 +31,7 @@ body:
     id: version
     attributes:
       label: Version or image tag
-      placeholder: "0.1.2 / latest / ghcr.io/...:v0.1.2"
+      placeholder: "0.2.0 / latest / ghcr.io/...:v0.2.0"
   - type: dropdown
     id: brand
     attributes:

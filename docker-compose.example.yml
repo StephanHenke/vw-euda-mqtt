@@ -1,7 +1,7 @@
 services:
-  vw-euda-mqtt:
-    image: ghcr.io/stephanhenke/vw-euda-mqtt:latest
-    container_name: vw-euda-mqtt
+  vwgroup-vehicle2mqtt:
+    image: ghcr.io/stephanhenke/vwgroup-vehicle2mqtt:latest
+    container_name: vwgroup-vehicle2mqtt
     restart: unless-stopped
     environment:
       - TZ=Europe/Berlin

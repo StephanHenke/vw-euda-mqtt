@@ -1,7 +1,7 @@
 services:
-  vw-euda-mqtt:
+  vwgroup-vehicle2mqtt:
     build: .
-    container_name: vw-euda-mqtt
+    container_name: vwgroup-vehicle2mqtt
     restart: unless-stopped
     environment:
       - TZ=Europe/Berlin

@@ -15,7 +15,7 @@
     "port": 1883,
     "username": "",
     "password": "",
-    "client_id": "vw-euda-mqtt",
+    "client_id": "vwgroup-vehicle2mqtt",
     "base_topic": "vw/euda",
     "retain": true,
     "qos": 0,

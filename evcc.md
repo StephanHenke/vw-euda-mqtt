@@ -1,16 +1,16 @@
-# evcc Integration
+﻿# evcc Integration
 
 [Deutsch](#deutsch) | [English](#english)
 
 ## Deutsch
 
-Diese Anleitung beschreibt, wie die von `vw-euda-mqtt` veröffentlichten MQTT-
+Diese Anleitung beschreibt, wie die von `vwgroup-vehicle2mqtt` veröffentlichten MQTT-
 Werte in evcc als Fahrzeugquelle genutzt werden können. Ziel ist, das bestehende
 evcc-Fahrzeug zu ersetzen, ohne die bisherigen Ladevorgänge zu verlieren.
 
 ### Grundprinzip
 
-`vw-euda-mqtt` veröffentlicht Fahrzeugwerte retained unter:
+`vwgroup-vehicle2mqtt` veröffentlicht Fahrzeugwerte retained unter:
 
 ```text
 vw/euda/<VIN>/
@@ -75,15 +75,15 @@ vehicles:
     capacity: 76
     soc:
       source: mqtt
-      topic: vw/euda/WAUZZZ00000000000/battery/soc
+      topic: vw/euda/TESTVIN1234567890/battery/soc
       timeout: 72h
     limitsoc:
       source: mqtt
-      topic: vw/euda/WAUZZZ00000000000/battery/target_soc
+      topic: vw/euda/TESTVIN1234567890/battery/target_soc
       timeout: 72h
     odometer:
       source: mqtt
-      topic: vw/euda/WAUZZZ00000000000/odometer/km
+      topic: vw/euda/TESTVIN1234567890/odometer/km
       timeout: 720h
     features:
       - streaming
@@ -93,7 +93,7 @@ vehicles:
 
 ### Ablauf
 
-1. In `vw-euda-mqtt` sicherstellen, dass MQTT retained aktiv ist:
+1. In `vwgroup-vehicle2mqtt` sicherstellen, dass MQTT retained aktiv ist:
 
    ```json
    "retain": true
@@ -114,11 +114,11 @@ vehicles:
 5. evcc neu starten.
 
 6. Falls evcc nach dem Neustart noch `0` anzeigt, die retained Topics erneut
-   veröffentlichen oder den nächsten Lauf von `vw-euda-mqtt` abwarten.
+   veröffentlichen oder den nächsten Lauf von `vwgroup-vehicle2mqtt` abwarten.
 
 ### Kilometerstand
 
-`vw-euda-mqtt` merkt sich den letzten plausiblen Wert von `odometer/km` in der
+`vwgroup-vehicle2mqtt` merkt sich den letzten plausiblen Wert von `odometer/km` in der
 lokalen `state_file`. Wenn ein neuer Portalwert `0`, nicht numerisch oder
 kleiner als der zuletzt bekannte Kilometerstand ist, wird für das normalisierte
 Topic weiter der letzte gültige Wert veröffentlicht.
@@ -128,13 +128,13 @@ VW/Audi-Datensatz stand.
 
 ## English
 
-This guide describes how to use the MQTT values published by `vw-euda-mqtt` as
+This guide describes how to use the MQTT values published by `vwgroup-vehicle2mqtt` as
 an evcc vehicle source. The goal is to replace the existing evcc vehicle data
 source without losing previous charging sessions.
 
 ### Basic Idea
 
-`vw-euda-mqtt` publishes retained vehicle values under:
+`vwgroup-vehicle2mqtt` publishes retained vehicle values under:
 
 ```text
 vw/euda/<VIN>/
@@ -198,15 +198,15 @@ vehicles:
     capacity: 76
     soc:
       source: mqtt
-      topic: vw/euda/WAUZZZ00000000000/battery/soc
+      topic: vw/euda/TESTVIN1234567890/battery/soc
       timeout: 72h
     limitsoc:
       source: mqtt
-      topic: vw/euda/WAUZZZ00000000000/battery/target_soc
+      topic: vw/euda/TESTVIN1234567890/battery/target_soc
       timeout: 72h
     odometer:
       source: mqtt
-      topic: vw/euda/WAUZZZ00000000000/odometer/km
+      topic: vw/euda/TESTVIN1234567890/odometer/km
       timeout: 720h
     features:
       - streaming
@@ -216,7 +216,7 @@ Adjust `capacity` to the vehicle's usable battery capacity.
 
 ### Steps
 
-1. Make sure retained MQTT publishing is enabled in `vw-euda-mqtt`:
+1. Make sure retained MQTT publishing is enabled in `vwgroup-vehicle2mqtt`:
 
    ```json
    "retain": true
@@ -237,11 +237,11 @@ Adjust `capacity` to the vehicle's usable battery capacity.
 5. Restart evcc.
 
 6. If evcc still shows `0` after restart, republish the retained topics or wait
-   for the next `vw-euda-mqtt` run.
+   for the next `vwgroup-vehicle2mqtt` run.
 
 ### Odometer
 
-`vw-euda-mqtt` stores the last plausible `odometer/km` value in its configured
+`vwgroup-vehicle2mqtt` stores the last plausible `odometer/km` value in its configured
 `state_file`. If a newer portal value is `0`, non-numeric, or lower than the
 last known odometer, the normalized MQTT topic keeps publishing the last valid
 value.

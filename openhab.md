@@ -1,8 +1,8 @@
-# openHAB Integration
+﻿# openHAB Integration
 
 ## Deutsch
 
-openHAB kann die von `vw-euda-mqtt` veröffentlichten Topics über das MQTT
+openHAB kann die von `vwgroup-vehicle2mqtt` veröffentlichten Topics über das MQTT
 Binding als Generic MQTT Thing einbinden. Die Integration ist read-only: Das
 Projekt stellt Fahrzeugdaten bereit, sendet aber keine Steuerbefehle an das
 Fahrzeug.
@@ -16,23 +16,23 @@ Channels für die einzelnen MQTT-State-Topics.
 Beispiele liegen unter:
 
 ```text
-openhab/vw-euda-mqtt.things
-openhab/vw-euda-mqtt.items
+openhab/vwgroup-vehicle2mqtt.things
+openhab/vwgroup-vehicle2mqtt.items
 ```
 
 ## Vorbereitung
 
 1. In openHAB das MQTT Binding installieren.
 2. Einen MQTT Broker als Thing anlegen oder das Beispiel in
-   `openhab/vw-euda-mqtt.things` anpassen.
+   `openhab/vwgroup-vehicle2mqtt.things` anpassen.
 3. In den Beispielen ersetzen:
    - `mqtt.example.local` durch deinen MQTT-Broker.
-   - `WAUZZZ00000000000` durch deine VIN.
+   - `TESTVIN1234567890` durch deine VIN.
    - optional `vw/euda`, falls du `mqtt.base_topic` geändert hast.
 
 ## Things-Beispiel
 
-Die Datei `openhab/vw-euda-mqtt.things` legt ein Broker Thing und ein Generic
+Die Datei `openhab/vwgroup-vehicle2mqtt.things` legt ein Broker Thing und ein Generic
 MQTT Topic Thing an. Das Topic Thing nutzt:
 
 ```text
@@ -63,7 +63,7 @@ Enthaltene Channels:
 
 ## Items-Beispiel
 
-Die Datei `openhab/vw-euda-mqtt.items` verlinkt die Channels auf Items. Die
+Die Datei `openhab/vwgroup-vehicle2mqtt.items` verlinkt die Channels auf Items. Die
 Zahlenwerte werden bewusst als einfache `Number` Items angelegt, damit die
 Beispiele ohne zusätzliche Unit- oder Transformation-Konfiguration funktionieren.
 
@@ -86,22 +86,22 @@ Number Audi_Battery_SOC "Battery SOC [%.0f %%]" {
 
 ## English
 
-openHAB can consume the topics published by `vw-euda-mqtt` through the MQTT
+openHAB can consume the topics published by `vwgroup-vehicle2mqtt` through the MQTT
 Binding as a Generic MQTT Thing. The integration is read-only: this project
 publishes vehicle data but does not send vehicle control commands.
 
 Example files:
 
 ```text
-openhab/vw-euda-mqtt.things
-openhab/vw-euda-mqtt.items
+openhab/vwgroup-vehicle2mqtt.things
+openhab/vwgroup-vehicle2mqtt.items
 ```
 
 Setup:
 
 1. Install the openHAB MQTT Binding.
 2. Configure an MQTT Broker Thing.
-3. Replace `mqtt.example.local`, `WAUZZZ00000000000`, and optionally `vw/euda`
+3. Replace `mqtt.example.local`, `TESTVIN1234567890`, and optionally `vw/euda`
    in the example files.
 4. Copy or adapt the Things and Items into your openHAB configuration.
 

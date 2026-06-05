@@ -16,10 +16,14 @@ from vw_euda_mqtt import __version__  # noqa: E402
 from vw_euda_mqtt.api import ApiError  # noqa: E402
 from vw_euda_mqtt.data import Dataset  # noqa: E402
 from vw_euda_mqtt.service import (  # noqa: E402
+    HOMEASSISTANT_BINARY_SENSOR_ENTITIES,
+    HOMEASSISTANT_SENSOR_ENTITIES,
     MqttConfig,
     ServiceConfig,
     _created_on,
+    _dataset_listing_retry_delay,
     _is_dataset_listing_pending,
+    _list_datasets_with_retries,
     _load_state,
     _mqtt_payload,
     _next_sleep,
@@ -185,6 +189,58 @@ class SchedulingTests(unittest.TestCase):
         self.assertTrue(_is_dataset_listing_pending(ApiError("GET /datadelivery/vehicles/abc/list -> HTTP 503")))
         self.assertFalse(_is_dataset_listing_pending(ApiError("GET /vehicles -> HTTP 404")))
         self.assertFalse(_is_dataset_listing_pending(ApiError("GET /datadelivery/vehicles/abc/list -> HTTP 401")))
+
+    def test_dataset_listing_retry_delay_uses_exponential_backoff_cap(self) -> None:
+        self.assertEqual(_dataset_listing_retry_delay(1), 5)
+        self.assertEqual(_dataset_listing_retry_delay(2), 10)
+        self.assertEqual(_dataset_listing_retry_delay(10), 30)
+
+    def test_dataset_listing_retries_transient_errors_and_returns_listing(self) -> None:
+        client = _DatasetListingClient(
+            [
+                ApiError("GET /datadelivery/vehicles/abc/list -> HTTP 500"),
+                ApiError("GET /datadelivery/vehicles/abc/list -> HTTP 503"),
+                [{"name": "dataset.zip"}],
+            ]
+        )
+        sleeps: list[int] = []
+
+        async def fake_sleep(delay: int) -> None:
+            sleeps.append(delay)
+
+        listing = asyncio.run(_list_datasets_with_retries(client, "TESTVIN1234567890", "identifier123", sleep=fake_sleep))
+
+        self.assertEqual(listing, [{"name": "dataset.zip"}])
+        self.assertEqual(client.calls, 3)
+        self.assertEqual(sleeps, [5, 10])
+
+    def test_dataset_listing_retry_does_not_swallow_non_transient_errors(self) -> None:
+        client = _DatasetListingClient([ApiError("GET /datadelivery/vehicles/abc/list -> HTTP 401")])
+
+        with self.assertRaises(ApiError):
+            asyncio.run(_list_datasets_with_retries(client, "TESTVIN1234567890", "identifier123"))
+
+        self.assertEqual(client.calls, 1)
+
+    def test_dataset_listing_retry_exhausts_transient_errors(self) -> None:
+        client = _DatasetListingClient(
+            [
+                ApiError("GET /datadelivery/vehicles/abc/list -> HTTP 500"),
+                ApiError("GET /datadelivery/vehicles/abc/list -> HTTP 502"),
+                ApiError("GET /datadelivery/vehicles/abc/list -> HTTP 504"),
+            ]
+        )
+        sleeps: list[int] = []
+
+        async def fake_sleep(delay: int) -> None:
+            sleeps.append(delay)
+
+        with self.assertRaises(ApiError) as ctx:
+            asyncio.run(_list_datasets_with_retries(client, "TESTVIN1234567890", "identifier123", sleep=fake_sleep))
+
+        self.assertIn("HTTP 504", str(ctx.exception))
+        self.assertEqual(client.calls, 3)
+        self.assertEqual(sleeps, [5, 10])
 
 
 class PublishTests(unittest.TestCase):
@@ -369,6 +425,52 @@ class PublishTests(unittest.TestCase):
         self.assertEqual(doors["payload_off"], "false")
         self.assertEqual(doors["device_class"], "lock")
 
+    def test_publish_homeassistant_discovery_covers_all_expected_topics(self) -> None:
+        publisher = _StandaloneRecorder()
+        mqtt_config = MqttConfig(
+            host="mqtt.example.local",
+            base_topic="vw/euda-dev",
+            homeassistant_discovery_prefix="/ha/",
+        )
+        vin = "TESTVIN1234567890"
+
+        publish_homeassistant_discovery(publisher, mqtt_config, vin)
+
+        published = dict(publisher.published)
+        node_id = "vw_euda_testvin1234567890"
+        expected_sensor_topics = {
+            f"ha/sensor/{node_id}/{entity['key']}/config"
+            for entity in HOMEASSISTANT_SENSOR_ENTITIES
+        }
+        expected_binary_topics = {
+            f"ha/binary_sensor/{node_id}/{entity['key']}/config"
+            for entity in HOMEASSISTANT_BINARY_SENSOR_ENTITIES
+        }
+        self.assertEqual(set(published), expected_sensor_topics | expected_binary_topics)
+
+        service_version = published[f"ha/sensor/{node_id}/service_version/config"]
+        self.assertEqual(service_version["state_topic"], f"vw/euda-dev/{vin}/status/service_version")
+        self.assertEqual(service_version["entity_category"], "diagnostic")
+        self.assertEqual(service_version["availability"][0]["topic"], f"vw/euda-dev/{vin}/status/online")
+        self.assertEqual(service_version["device"]["name"], "VW Group Vehicle2MQTT 567890")
+        self.assertEqual(service_version["device"]["manufacturer"], "Volkswagen Group")
+        self.assertEqual(service_version["device"]["model"], "Vehicle2MQTT")
+        self.assertEqual(service_version["device"]["sw_version"], __version__)
+
+        data_age = published[f"ha/sensor/{node_id}/data_age/config"]
+        self.assertEqual(data_age["state_topic"], f"vw/euda-dev/{vin}/status/data_age_seconds")
+        self.assertEqual(data_age["device_class"], "duration")
+        self.assertEqual(data_age["unit_of_measurement"], "s")
+        self.assertEqual(data_age["state_class"], "measurement")
+        self.assertEqual(data_age["entity_category"], "diagnostic")
+
+        stale = published[f"ha/binary_sensor/{node_id}/stale/config"]
+        self.assertEqual(stale["state_topic"], f"vw/euda-dev/{vin}/status/stale")
+        self.assertEqual(stale["device_class"], "problem")
+        self.assertEqual(stale["entity_category"], "diagnostic")
+        self.assertEqual(stale["payload_on"], "true")
+        self.assertEqual(stale["payload_off"], "false")
+
     def test_publish_dataset_can_include_homeassistant_discovery(self) -> None:
         fake_class = _recording_publisher_class()
         config = ServiceConfig(
@@ -421,6 +523,19 @@ class _StandaloneRecorder:
 
     def publish(self, topic: str, value: object) -> None:
         self.published.append((topic, value))
+
+
+class _DatasetListingClient:
+    def __init__(self, responses: list[object]) -> None:
+        self.responses = responses
+        self.calls = 0
+
+    async def async_list_datasets(self, vin: str, identifier: str) -> list[dict]:
+        response = self.responses[self.calls]
+        self.calls += 1
+        if isinstance(response, Exception):
+            raise response
+        return response
 
 
 def _recording_publisher_class():

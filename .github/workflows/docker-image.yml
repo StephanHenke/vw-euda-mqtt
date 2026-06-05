@@ -84,7 +84,7 @@ jobs:
         id: dockerhub_meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.DOCKERHUB_USERNAME }}/vw-euda-mqtt
+          images: ${{ env.DOCKERHUB_USERNAME }}/vwgroup-vehicle2mqtt
           tags: |
             type=ref,event=branch
             type=semver,pattern={{version}}
@@ -109,7 +109,7 @@ jobs:
         with:
           username: ${{ env.DOCKERHUB_USERNAME }}
           password: ${{ env.DOCKERHUB_TOKEN }}
-          repository: ${{ env.DOCKERHUB_USERNAME }}/vw-euda-mqtt
-          short-description: VW/Audi EU Data Act MQTT bridge for smart home and energy management
+          repository: ${{ env.DOCKERHUB_USERNAME }}/vwgroup-vehicle2mqtt
+          short-description: VW Group vehicle data to MQTT bridge for smart home and energy management
           readme-filepath: ./DOCKERHUB.md
           enable-url-completion: true

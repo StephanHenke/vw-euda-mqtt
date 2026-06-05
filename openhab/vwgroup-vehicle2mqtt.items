@@ -1,4 +1,4 @@
-Group gVwEuda "VW EU Data Act Vehicle"
+Group gVwEuda "VW Group Vehicle2MQTT"
 
 Number Audi_Battery_SOC "Battery SOC [%.0f %%]" (gVwEuda) { channel="mqtt:topic:local:vw_euda_vehicle:battery_soc" }
 Number Audi_Target_SOC "Target SOC [%.0f %%]" (gVwEuda) { channel="mqtt:topic:local:vw_euda_vehicle:target_soc" }

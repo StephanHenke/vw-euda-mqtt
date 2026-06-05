@@ -1,8 +1,8 @@
-# VW EU Data Act MQTT Service
+# VW Group Vehicle2MQTT
 
-[![Tests](https://github.com/StephanHenke/vw-euda-mqtt/actions/workflows/tests.yml/badge.svg)](https://github.com/StephanHenke/vw-euda-mqtt/actions/workflows/tests.yml)
-[![Docker Image](https://github.com/StephanHenke/vw-euda-mqtt/actions/workflows/docker-image.yml/badge.svg)](https://github.com/StephanHenke/vw-euda-mqtt/actions/workflows/docker-image.yml)
-[![Docker Pulls](https://img.shields.io/docker/pulls/stephanhenke/vw-euda-mqtt)](https://hub.docker.com/r/stephanhenke/vw-euda-mqtt)
+[![Tests](https://github.com/StephanHenke/vwgroup-vehicle2mqtt/actions/workflows/tests.yml/badge.svg)](https://github.com/StephanHenke/vwgroup-vehicle2mqtt/actions/workflows/tests.yml)
+[![Docker Image](https://github.com/StephanHenke/vwgroup-vehicle2mqtt/actions/workflows/docker-image.yml/badge.svg)](https://github.com/StephanHenke/vwgroup-vehicle2mqtt/actions/workflows/docker-image.yml)
+[![Docker Pulls](https://img.shields.io/docker/pulls/stephanhenke/vwgroup-vehicle2mqtt)](https://hub.docker.com/r/stephanhenke/vwgroup-vehicle2mqtt)
 
 [English](README.md)
 
@@ -11,6 +11,10 @@ Volkswagen Konzerns bereitgestellt werden, und sie strukturiert an einen MQTT
 Broker weiterleiten. Ziel ist, diese Werte in Smart-Home-Systemen,
 Energiemanagementsystemen und ähnlichen lokalen Automatisierungsplattformen
 bereitzustellen.
+
+Der frühere Projektname war `vw-euda-mqtt`. Der neue Name
+`vwgroup-vehicle2mqtt` beschreibt den Einsatzzweck breiter, weil es um
+Fahrzeugdaten aus dem Volkswagen Konzern und deren Weiterleitung nach MQTT geht.
 
 Der Dienst meldet sich bei `eu-data-act.drivesomethinggreater.com` an, wählt die
 konfigurierte Marke aus, liest die neueste Continuous-Data-ZIP-Datei für eine
@@ -118,7 +122,9 @@ Wichtige Felder:
   Identifier aus den Metadaten.
 - `poll_interval_seconds`: Standard `900`, passend zu 15 Minuten.
 - `mqtt.host`, `mqtt.port`, `mqtt.username`, `mqtt.password`: MQTT-Zugang.
-- `mqtt.base_topic`: Standard `vw/euda`.
+- `mqtt.base_topic`: Standard `vw/euda`. Das Topic bleibt aus
+  Kompatibilitätsgründen bewusst stabil, auch wenn der Dienst jetzt
+  `vwgroup-vehicle2mqtt` heißt.
 - `mqtt.publish_raw`: veröffentlicht zusätzlich alle Rohdaten unter `raw/...`.
 - `mqtt.publish_carcompat`: spiegelt einzelne Werte optional unter
   `car/garage/<vin>/...`.
@@ -148,36 +154,36 @@ VW_EUDA_MQTT_PASSWORD
 Einrichtungsdiagnose ohne Ausgabe von Zugangsdaten:
 
 ```powershell
-uv run vw-euda-mqtt --config config.json --diagnose
+uv run vwgroup-vehicle2mqtt --config config.json --diagnose
 ```
 
 ```powershell
-uv run vw-euda-mqtt --config config.json --once --dry-run --debug
+uv run vwgroup-vehicle2mqtt --config config.json --once --dry-run --debug
 ```
 
 Ohne MQTT-Publish, aber mit echtem Portal-Login:
 
 ```powershell
-uv run vw-euda-mqtt --config config.json --once --dry-run
+uv run vwgroup-vehicle2mqtt --config config.json --once --dry-run
 ```
 
 Einmaliger echter Lauf mit MQTT-Publish:
 
 ```powershell
-uv run vw-euda-mqtt --config config.json --once
+uv run vwgroup-vehicle2mqtt --config config.json --once
 ```
 
 Dauerbetrieb lokal:
 
 ```powershell
-uv run vw-euda-mqtt --config config.json
+uv run vwgroup-vehicle2mqtt --config config.json
 ```
 
 Prüfen, ob der letzte erfolgreiche Dataset-Publish noch frisch genug für
 Container-Monitoring ist:
 
 ```powershell
-uv run vw-euda-mqtt --config config.json --healthcheck
+uv run vwgroup-vehicle2mqtt --config config.json --healthcheck
 ```
 
 ## Docker-Betrieb
@@ -186,13 +192,13 @@ Fertige Images werden auf Docker Hub und in der GitHub Container Registry
 veröffentlicht:
 
 ```bash
-docker pull stephanhenke/vw-euda-mqtt:latest
+docker pull stephanhenke/vwgroup-vehicle2mqtt:latest
 ```
 
 Dasselbe Image ist zusätzlich über die GitHub Container Registry verfügbar:
 
 ```bash
-docker pull ghcr.io/stephanhenke/vw-euda-mqtt:latest
+docker pull ghcr.io/stephanhenke/vwgroup-vehicle2mqtt:latest
 ```
 
 Der GitHub-Actions-Workflow veröffentlicht auf Docker Hub, wenn die
@@ -218,7 +224,7 @@ docker compose up -d --build
 Logs anzeigen:
 
 ```bash
-docker logs -f vw-euda-mqtt
+docker logs -f vwgroup-vehicle2mqtt
 ```
 
 Das veröffentlichte Image enthält einen Docker-`HEALTHCHECK`. Er liest die
@@ -235,9 +241,9 @@ docker compose up -d --build
 Auf Servern, auf denen Docker nur mit `sudo` verfügbar ist:
 
 ```bash
-cd /pfad/zum/vw-euda-mqtt
+cd /pfad/zum/vwgroup-vehicle2mqtt
 sudo docker compose up -d --build
-sudo docker logs -f vw-euda-mqtt
+sudo docker logs -f vwgroup-vehicle2mqtt
 ```
 
 ## MQTT-Topics
@@ -398,8 +404,10 @@ ist abgelaufen. Mit `--debug` prüfen, ob der Login bei
 
 `HTTP 500` beim List-Endpunkt
 
-Kann beim Portal transient auftreten. Der Dienst wiederholt den Poll nach
-`retry_interval_seconds`.
+Kann beim Portal transient auftreten. Der Dienst versucht den Datadelivery-
+List-Endpunkt innerhalb desselben Polls mehrfach mit kurzem exponentiellem
+Backoff. Erst wenn diese Versuche fehlschlagen, publiziert er `PendingData` und
+wiederholt den gesamten Poll nach `retry_interval_seconds`.
 
 ## Git- und Sicherheitsnotizen
 
